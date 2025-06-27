@@ -1,8 +1,9 @@
 // Data Streaming for Explicit Algorithms - DSEA
 
-#include "dsea.h"
+#include <dsea.h>
 #include <string>
 #include <fstream>
+#include <cmath>
 
 using namespace std;
 
@@ -93,10 +94,27 @@ int32_t DS::thread_storage (int32_t n_super_cycle, int32_t myID, int32_t nProcs)
 			p_dat_int[0]=i_part;
 
 			double * pdat_d=(double*)pdat;
-			for (int32_t i_field=0;i_field<block_n_fields;i_field++) {
-				for (int32_t i_cell=0;i_cell<block_ncc;i_cell++) {
-					pdat_d[block_header_size+i_field*block_ncc+i_cell]=(i_field+1)*(double)i_cell/(double)block_ncc;
-				}
+
+			double x, y, z;
+			double u0, u1, u2, p, r;
+			x = i_part * DX;
+
+			for (int32_t i_cell=0;i_cell<block_ncc;i_cell++) {
+				y = i_cell / NZ * DY;
+				z = i_cell % NZ * DZ;
+
+				u0 = sin(x)*cos(y)*cos(z);
+				u1 = -sin(y)*cos(x)*cos(z);
+				u2 = 0.0;
+
+				p = (0.0625*cos(2.0*x) + 0.0625*cos(2.0*y))*(cos(2.0*z) + 2.0) + 1.0/(pow(MINF, 2)*GAMA);
+				r = pow(MINF, 2)*GAMA*p;
+
+				pdat_d[block_header_size+0*block_ncc+i_cell]=r;
+				pdat_d[block_header_size+1*block_ncc+i_cell]=r * u0;
+				pdat_d[block_header_size+2*block_ncc+i_cell]=r * u1;
+				pdat_d[block_header_size+3*block_ncc+i_cell]=r * u2;
+				pdat_d[block_header_size+4*block_ncc+i_cell]= p/(GAMA - 1) + 0.5*r*(pow(u0, 2) + pow(u1, 2) + pow(u2, 2));;
 			}
 
 
@@ -122,3 +140,4 @@ int32_t DS::thread_storage (int32_t n_super_cycle, int32_t myID, int32_t nProcs)
 
 	return 0;
 }
+

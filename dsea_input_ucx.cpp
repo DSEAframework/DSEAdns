@@ -1,6 +1,6 @@
 // Data Streaming for Explicit Algorithms - DSEA
 
-#include "dsea.h"
+#include <dsea.h>
 #include "src/ucx_multirail.h"
 
 #include <chrono>	// sleep
@@ -29,19 +29,19 @@ int32_t DS::thread_input_ucx (int argc, char ** argv,int32_t n_super_cycle, int3
 	int32_t i_perf_hist_1000=0;
 
 	// init ucx dual rail
-    cudaSetDevice(0);
+	cudaSetDevice(0);
 
-    ucs_status_t status;
-    ucx_mr_context_t mr_ctx;
-    mr_ctx.server_addr = NULL;
+	ucs_status_t status;
+	ucx_mr_context_t mr_ctx;
+	mr_ctx.server_addr = NULL;
 
-    parse_opts(&mr_ctx, argc, argv);
+	parse_opts(&mr_ctx, argc, argv);
 
-    status = ucx_mr_setup(&mr_ctx);
-    if (status != UCS_OK) {
-        printf("There was a problem!\n");
-    }
-    ucx_mr_test_connection(&mr_ctx);
+	status = ucx_mr_setup(&mr_ctx);
+	if (status != UCS_OK) {
+			printf("There was a problem!\n");
+	}
+	ucx_mr_test_connection(&mr_ctx);
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 
@@ -58,134 +58,122 @@ int32_t DS::thread_input_ucx (int argc, char ** argv,int32_t n_super_cycle, int3
 	CUdeviceptr tmp_store0;
 	cudaMalloc((void**)&tmp_store0,size_device);
 
-	// {
+	{
 	// // cout << "thread_input_ucx:init_done" << endl;
 
-	// int64_t t_single_a=MyGetTime();
-	int n_loop=20;
-	// for (int i=0;i<n_loop;i++) {
-	// 	ucp_tag_t tag = 0x133;
-	// 	ucx_mr_single_recv(&mr_ctx, 0, tag, (void*)tmp_store0, size_device, UCS_MEMORY_TYPE_CUDA, 0);
-	// }
-	// int64_t t_single_b=MyGetTime();
-	// double t_single=(t_single_b-t_single_a)/(double)n_loop/1e6;
-	// double rate_single=(double)size_device/t_single;
-	// rate_single/=1e9;
-	// cout << "rate_single_rail_0:_" << rate_single << endl;
-	// // cudaSetDevice(0);
-
-
-
-	// t_single_a=MyGetTime();
-	// for (int i=0;i<n_loop;i++) {
-	// 	ucp_tag_t tag = 0x233;
-	// 	ucx_mr_single_recv(&mr_ctx, 1, tag, (void*)tmp_store1, size_device, UCS_MEMORY_TYPE_CUDA, 1);
-	// }
-	// t_single_b=MyGetTime();
-	// t_single=(t_single_b-t_single_a)/(double)n_loop/1e6;
-	// rate_single=(double)size_device/t_single;
-	// rate_single/=1e9;
-	// cout << "rate_single_rail_1:_" << rate_single << endl;
-	// // cudaSetDevice(0);
-
-
-	// t_single_a=MyGetTime();
-	// for (int i=0;i<n_loop;i++) {
-	// 	ucp_tag_t tag = 0x333;
-	// 	ucx_mr_single_recv(&mr_ctx, 2, tag, (void*)tmp_store2, size_device, UCS_MEMORY_TYPE_CUDA, 2);
-	// }
-	// t_single_b=MyGetTime();
-	// t_single=(t_single_b-t_single_a)/(double)n_loop/1e6;
-	// rate_single=(double)size_device/t_single;
-	// rate_single/=1e9;
-	// cout << "rate_single_rail_2:_" << rate_single << endl;
-	// // cudaSetDevice(0);
-
-
-	// t_single_a=MyGetTime();
-	// for (int i=0;i<n_loop;i++) {
-	// 	ucp_tag_t tag = 0x433;
-	// 	ucx_mr_single_recv(&mr_ctx, 3, tag, (void*)tmp_store3, size_device, UCS_MEMORY_TYPE_CUDA, 3);
-	// }
-	// t_single_b=MyGetTime();
-	// t_single=(t_single_b-t_single_a)/(double)n_loop/1e6;
-	// rate_single=(double)size_device/t_single;
-	// rate_single/=1e9;
-	// cout << "rate_single_rail_3:_" << rate_single << endl;
-	// // cudaSetDevice(0);
-
-
-
-
-	// // // cout << "thread_input_ucx:single rec done" << endl;
-	// cout << "starting dual rail benchmark..." << endl;
-
-	// int64_t t_dual_a=MyGetTime();
-	// n_loop=1000;
-	// for (int i=0;i<n_loop;i++) {
-	// 	ucp_tag_t tag = 0x533;
-	// 	int element_size = sizeof(int32_t);
-	// 	float split_ratio=0.5;
-	// 	int32_t ucx_ret=ucx_mr_split_recv(&mr_ctx, tag, split_ratio, element_size,(void*)d_in[0], size_device, UCS_MEMORY_TYPE_CUDA, 0,(void*)tmp_store1, UCS_MEMORY_TYPE_CUDA, 1);
-	// 	// int32_t ucx_ret=ucx_mr_dual_split_recv(&mr_ctx, tag, split_ratio, element_size,(void*)d_in[i_store], size_device, UCS_MEMORY_TYPE_CUDA, 0,(void*)tmp_store1, UCS_MEMORY_TYPE_CUDA, 1,1);
-	// }
-	// int64_t t_dual_b=MyGetTime();
-	// double t_dual=(t_dual_b-t_dual_a)/(double)n_loop/1e6;
-	// double rate_dual=(double)size_device/t_dual;
-	// rate_dual/=1e9;
-	// cout << "rate_dual:_" << rate_dual << endl;
-
-
-	int64_t t_triple_a=MyGetTime();
-	n_loop=200;
-	for (int i=0;i<n_loop;i++) {
-		// cout << i << endl;
-		ucp_tag_t tag = 0x733;
-		int element_size = sizeof(int32_t);
-		float split_ratio=0.66;
-		
-		int32_t ucx_ret=ucx_mr_tripple_split_recv_simple(&mr_ctx, tag, split_ratio, element_size,(void*)d_in[0], size_device, UCS_MEMORY_TYPE_CUDA, 0,
-		(void*)tmp_store1, UCS_MEMORY_TYPE_CUDA, 1,
-		(void*)tmp_store2, UCS_MEMORY_TYPE_CUDA, 2);
-		if (ucx_ret!=UCS_OK) {
-			cout << "prob_rec_a3" << endl;
+		int64_t t_single_a=MyGetTime();
+		int n_loop=20;
+		for (int i=0;i<n_loop;i++) {
+			ucp_tag_t tag = 0x133;
+			ucx_mr_single_recv(&mr_ctx, 0, tag, (void*)tmp_store0, size_device, UCS_MEMORY_TYPE_CUDA, 0);
 		}
+		int64_t t_single_b=MyGetTime();
+		double t_single=(t_single_b-t_single_a)/(double)n_loop/1e6;
+		double rate_single=(double)size_device/t_single;
+		rate_single/=1e9;
+		cout << "rate_single_rail_0:_" << rate_single << endl;
+		// cudaSetDevice(0);
+		t_single_a=MyGetTime();
+		for (int i=0;i<n_loop;i++) {
+			ucp_tag_t tag = 0x233;
+			ucx_mr_single_recv(&mr_ctx, 1, tag, (void*)tmp_store1, size_device, UCS_MEMORY_TYPE_CUDA, 1);
+		}
+		t_single_b=MyGetTime();
+		t_single=(t_single_b-t_single_a)/(double)n_loop/1e6;
+		rate_single=(double)size_device/t_single;
+		rate_single/=1e9;
+		cout << "rate_single_rail_1:_" << rate_single << endl;
+		// cudaSetDevice(0);
+		t_single_a=MyGetTime();
+		for (int i=0;i<n_loop;i++) {
+			ucp_tag_t tag = 0x333;
+			ucx_mr_single_recv(&mr_ctx, 2, tag, (void*)tmp_store2, size_device, UCS_MEMORY_TYPE_CUDA, 2);
+		}
+		t_single_b=MyGetTime();
+		t_single=(t_single_b-t_single_a)/(double)n_loop/1e6;
+		rate_single=(double)size_device/t_single;
+		rate_single/=1e9;
+		cout << "rate_single_rail_2:_" << rate_single << endl;
+		// cudaSetDevice(0);
+		t_single_a=MyGetTime();
+		for (int i=0;i<n_loop;i++) {
+			ucp_tag_t tag = 0x433;
+			ucx_mr_single_recv(&mr_ctx, 3, tag, (void*)tmp_store3, size_device, UCS_MEMORY_TYPE_CUDA, 3);
+		}
+		t_single_b=MyGetTime();
+		t_single=(t_single_b-t_single_a)/(double)n_loop/1e6;
+		rate_single=(double)size_device/t_single;
+		rate_single/=1e9;
+		cout << "rate_single_rail_3:_" << rate_single << endl;
+		// cudaSetDevice(0);
+
+
+
+
+		// // cout << "thread_input_ucx:single rec done" << endl;
+		cout << "starting dual rail benchmark..." << endl;
+		int64_t t_dual_a=MyGetTime();
+		n_loop=1000;
+		for (int i=0;i<n_loop;i++) {
+		ucp_tag_t tag = 0x533;
+			int element_size = sizeof(int32_t);
+			float split_ratio=0.5;
+			int32_t ucx_ret=ucx_mr_split_recv(&mr_ctx, tag, split_ratio, element_size,(void*)d_in[0], size_device, UCS_MEMORY_TYPE_CUDA, 0,(void*)tmp_store1, UCS_MEMORY_TYPE_CUDA, 1);
+			// int32_t ucx_ret=ucx_mr_dual_split_recv(&mr_ctx, tag, split_ratio, element_size,(void*)d_in[i_store], size_device, UCS_MEMORY_TYPE_CUDA, 0,(void*)tmp_store1, UCS_MEMORY_TYPE_CUDA, 1,1);
+		}
+		int64_t t_dual_b=MyGetTime();
+		double t_dual=(t_dual_b-t_dual_a)/(double)n_loop/1e6;
+		double rate_dual=(double)size_device/t_dual;
+		rate_dual/=1e9;
+		cout << "rate_dual:_" << rate_dual << endl;
+
+
+		int64_t t_triple_a=MyGetTime();
+		n_loop=200;
+		for (int i=0;i<n_loop;i++) {
+			// cout << i << endl;
+			ucp_tag_t tag = 0x733;
+			int element_size = sizeof(int32_t);
+			float split_ratio=0.66;
+
+			int32_t ucx_ret=ucx_mr_tripple_split_recv_simple(&mr_ctx, tag, split_ratio, element_size,(void*)d_in[0], size_device, UCS_MEMORY_TYPE_CUDA, 0,
+			(void*)tmp_store1, UCS_MEMORY_TYPE_CUDA, 1,
+			(void*)tmp_store2, UCS_MEMORY_TYPE_CUDA, 2);
+			if (ucx_ret!=UCS_OK) {
+				cout << "prob_rec_a3" << endl;
+			}
+		}
+		int64_t t_tripple_b=MyGetTime();
+		double t_tripple=(t_tripple_b-t_triple_a)/(double)n_loop/1e6;
+		double rate_tripple=(double)size_device/t_tripple;
+		rate_tripple/=1e9;
+		cout << "rate_tripple:_" << rate_tripple << endl;
+
+
+
+		int64_t t_quad_a=MyGetTime();
+		n_loop=200;
+		for (int i=0;i<n_loop;i++) {
+			if (i%100==0) cout << i << endl;
+			ucp_tag_t tag = 0x633;
+			int element_size = sizeof(int32_t);
+			float split_ratio=0.75;
+			int32_t ucx_ret=ucx_mr_quad_split_recv_simple(&mr_ctx, tag, split_ratio, element_size,(void*)d_in[0], size_device, UCS_MEMORY_TYPE_CUDA, 0,
+			(void*)tmp_store1, UCS_MEMORY_TYPE_CUDA, 1,
+			(void*)tmp_store2, UCS_MEMORY_TYPE_CUDA, 2,
+			(void*)tmp_store3, UCS_MEMORY_TYPE_CUDA, 3);
+			if (ucx_ret!=UCS_OK) {
+				cout << "prob_rec_a4" << endl;
+			}
+		}
+		int64_t t_quad_b=MyGetTime();
+		double t_quad=(t_quad_b-t_quad_a)/(double)n_loop/1e6;
+		double rate_quad=(double)size_device/t_quad;
+		rate_quad/=1e9;
+		cout << "rate_quad:_" << rate_quad << endl;
+
+		cout << "thread_input_ucx:ready_to_go" << endl;
 	}
-	int64_t t_tripple_b=MyGetTime();
-	double t_tripple=(t_tripple_b-t_triple_a)/(double)n_loop/1e6;
-	double rate_tripple=(double)size_device/t_tripple;
-	rate_tripple/=1e9;
-	cout << "rate_tripple:_" << rate_tripple << endl;
-
-
-
-	// int64_t t_quad_a=MyGetTime();
-	// n_loop=2000;
-	// for (int i=0;i<n_loop;i++) {
-
-	// 	if (i%100==0) cout << i << endl;
-	// 	ucp_tag_t tag = 0x633;
-	// 	int element_size = sizeof(int32_t);
-	// 	float split_ratio=0.75;
-		
-	// 	int32_t ucx_ret=ucx_mr_quad_split_recv_simple(&mr_ctx, tag, split_ratio, element_size,(void*)d_in[0], size_device, UCS_MEMORY_TYPE_CUDA, 0,
-	// 	(void*)tmp_store1, UCS_MEMORY_TYPE_CUDA, 1,
-	// 	(void*)tmp_store2, UCS_MEMORY_TYPE_CUDA, 2,
-	// 	(void*)tmp_store3, UCS_MEMORY_TYPE_CUDA, 3);
-	// 	if (ucx_ret!=UCS_OK) {
-	// 		cout << "prob_rec_a4" << endl;
-	// 	}
-	// }
-	// int64_t t_quad_b=MyGetTime();
-	// double t_quad=(t_quad_b-t_quad_a)/(double)n_loop/1e6;
-	// double rate_quad=(double)size_device/t_quad;
-	// rate_quad/=1e9;
-	// cout << "rate_quad:_" << rate_quad << endl;
-
-
-
-    // cout << "thread_input_ucx:ready_to_go" << endl;
-	// }
 
 	// return 0;
 
@@ -241,9 +229,6 @@ int32_t DS::thread_input_ucx (int argc, char ** argv,int32_t n_super_cycle, int3
 						// stat_mem_in[i_store].i_part=i_part;	//(2)
 						stat_mem_in[i_store].state=mem_state_ready_b;
 					}
-//						pre_nm_sum+=BlockGetNM((char*)mycu.store_p_in[i_store]);
-// 						current_nm_sum+=BlockGetNM((char*)mycu.store_p_in[i_store]);
-// // 						cout << "L"<<i_part<< "_"<< i_store << "_" << dat_size[0] << endl;
 				}
 			}
 			else {
@@ -307,11 +292,13 @@ int32_t DS::thread_input_ucx (int argc, char ** argv,int32_t n_super_cycle, int3
 
 				if (i_part==0) {
 					tb=MyGetTime();
-					if ((ta>0)&&(current_nm_sum>0)) {
+					if (ta>0) {
 
 						double seconds=(double)(tb-ta)/1000000.0;
 						int32_t my_worker_sum=nProcs*n_worker;
-						double rate=(double)current_nm_sum*(double)my_worker_sum/seconds;
+						current_nm_sum=1;
+						//double rate=(double)current_nm_sum*(double)my_worker_sum/seconds;
+						double rate = seconds;
 
 						// record convergence data
 						if (myID==0) {
@@ -354,7 +341,7 @@ int32_t DS::thread_input_ucx (int argc, char ** argv,int32_t n_super_cycle, int3
 							}
 							perf_1000/=n_perf_1000;
 
-							cout << rate << " " << perf_10 << " (10) " << perf_100 << " (100) " << perf_1000 << " (1000) " << " mol/s " << current_nm_sum << " nm " << seconds << " s " << endl;
+							cout << "!>P< Time per Supercylce: " << rate << "s "" " << perf_10 << "s (10) " << perf_100 << "s (100) " << perf_1000 << "s (1000) " << endl;
 						}
 					}
 					current_nm_sum=0;

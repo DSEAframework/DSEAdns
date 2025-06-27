@@ -1,6 +1,6 @@
 // Data Streaming for Explicit Algorithms - DSEA
 
-#include "dsea.h"
+#include <dsea.h>
 #include <cuda.h>
 #include <sys/time.h>
 
@@ -23,12 +23,8 @@ DS::DS (int32_t igpu, int32_t nworker, int32_t npart, int32_t orderin, int32_t o
 	store_size=-1;
 	worker_n_block=-1;
 
-#if defined case_100
 	store_size = (block_header_size+block_n_fields*block_ncc)*sizeof(double);              // [bytes]
 
-#else
-	cout << "case_not_defined_a" << endl;
-#endif
 
 	worker_n_block=block_ncc;
 
@@ -37,6 +33,7 @@ DS::DS (int32_t igpu, int32_t nworker, int32_t npart, int32_t orderin, int32_t o
 	size_device = store_size;
 
 	size_temp=NULL;
+
 
 	n_pointer=0;
 	n_store_in=12;
@@ -49,10 +46,30 @@ DS::DS (int32_t igpu, int32_t nworker, int32_t npart, int32_t orderin, int32_t o
 	// int n_store_sum=(n_store_in+n_store_out+n_worker*n_store_worker)*nprocs;
 
 	// try to keep the number of storage slots small
-	while ((double)n_store_sum<(double)(my_n_part*1.2)) {
+	while ((double)n_store_sum<(double)(my_n_part*3.0)) {
 		n_store_in++;
 		n_store_sum=(n_store_in+n_store_out+(n_worker-1)*n_store_worker)*nprocs;
 	}
+
+/*
+	n_pointer=0;
+	n_store_in=12;
+	n_store_out=12;
+	n_store_worker=8;
+	n_store_host=0;
+	pointer_list = new int64_t * [1024];
+
+	int n_store_sum=(n_store_in+n_store_out+(n_worker-1)*n_store_worker)*nprocs;
+	// int n_store_sum=(n_store_in+n_store_out+n_worker*n_store_worker)*nprocs;
+
+	// try to keep the number of storage slots small
+	while ((double)n_store_sum<(double)(my_n_part*1.7)) {
+		n_store_in++;
+		n_store_out++;
+		n_store_worker++;
+		n_store_sum=(n_store_in+n_store_out+(n_worker-1)*n_store_worker)*nprocs;
+	}
+*/
 
 	if (my_id==0) {
 		cout << "n_store_in, n_store_out =" << n_store_in << ", " << n_store_out << " n_store_sum: " << n_store_sum << " my_n_part: " << my_n_part << endl;

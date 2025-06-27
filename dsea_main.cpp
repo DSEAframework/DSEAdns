@@ -1,6 +1,6 @@
 // Data Streaming for Explicit Algorithms - DSEA
 
-#include "dsea.h"
+#include <dsea.h>
 
 using namespace std;
 
@@ -203,7 +203,7 @@ int32_t DS::thread_main (int32_t n_super_cycle, int32_t myID) {
 				}
 				else {
 					if (i_worker>0) {
-						if ((w_part[i_worker-1]==my_n_part)||(w_part[i_worker-1]-part_to_process>order_out+order_in)) {
+						if ((w_part[i_worker-1]==my_n_part)||(w_part[i_worker-1]-part_to_process>(order_in+order_out))) {
 							// worker active
 						}
 						else {
@@ -349,11 +349,11 @@ int32_t DS::thread_main (int32_t n_super_cycle, int32_t myID) {
 
 					caller_worker (p_in,p_out,part_to_process,i_super_cycle,order_in,order_out,i_worker,n_worker,&stream_worker,worker_threads_per_block,worker_n_block,myID);
 
-					if (false)
+					//if (false)
 					if (my_id==0) {
 					if (worker_first) {
 					// if (i_super_cycle > 0)
-					if (i_super_cycle % 50 == 0) {
+					if (DOUTPUT > 0 && i_super_cycle % DOUTPUT == 0 && i_super_cycle > DOUTPUTSTART) {
 						cout << "output_pre_" << part_to_process << endl;
 						// caller_output_vtk(p_in[0],(double*)d_visual,&stream_worker,worker_threads_per_block,worker_n_block,myID,i_super_cycle);
 						caller_output_vtk_rectilinear(p_in[0],(double*)d_visual,&stream_worker,worker_threads_per_block,worker_n_block,myID,i_super_cycle,part_to_process);

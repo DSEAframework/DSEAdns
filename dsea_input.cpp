@@ -1,6 +1,6 @@
 // Data Streaming for Explicit Algorithms - DSEA
 
-#include "dsea.h"
+#include <dsea.h>
 
 using namespace std;
 
@@ -80,15 +80,20 @@ int32_t DS::thread_input (int32_t n_super_cycle, int32_t myID, int32_t nProcs) {
 
 				int32_t tag=i_part;
 				MPI_Status status;
+				//cout << "Pre Recv" << endl;
 				int32_t mpi_ret=MPI_Recv((void *)d_in[i_store],store_size/sizeof(int32_t),MPI_INT,source,tag,MPI_COMM_WORLD,&status);
+				//cout << "Post Recv" << endl;
 
 				if (i_part==0) {
 					tb=MyGetTime();
-					if ((ta>0)&&(current_nm_sum>0)) {
+					if ((ta>0)) {
 
 						double seconds=(double)(tb-ta)/1000000.0;
 						int32_t my_worker_sum=nProcs*n_worker;
-						double rate=(double)current_nm_sum*(double)my_worker_sum/seconds;
+						current_nm_sum=1;
+						//double rate=(double)current_nm_sum*(double)my_worker_sum/seconds;
+						// measure rate in seconds per supercycle
+						double rate = seconds;
 
 						// record convergence data
 						if (myID==0) {
@@ -130,12 +135,14 @@ int32_t DS::thread_input (int32_t n_super_cycle, int32_t myID, int32_t nProcs) {
 								}
 							}
 							perf_1000/=n_perf_1000;
-
-							cout << rate << " " << perf_10 << " (10) " << perf_100 << " (100) " << perf_1000 << " (1000) " << " mol/s " << current_nm_sum << " nm " << seconds << " s " << endl;
+							// seconds: seconds per supercycle
+							// 
+							cout << "!>P< Time per Supercylce: " << rate << "s "" " << perf_10 << "s (10) " << perf_100 << "s (100) " << perf_1000 << "s (1000) " << endl;
+							//cout << rate << " " << perf_10 << " (10) " << perf_100 << " (100) " << perf_1000 << " (1000) " << " mol/s " << current_nm_sum << " nm " << seconds << " s " << endl;
 							// cout << rate << " mol/s " << current_nm_sum << " nm " << seconds << " s " << (double)n_bytes_loaded/1.0e9/seconds << "GB/s #current_nm_sum" << endl;
 						}
 					}
-					current_nm_sum=0;
+					current_nm_sum=1;
 					ta=tb;
 				}
 

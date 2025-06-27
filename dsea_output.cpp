@@ -1,6 +1,6 @@
 // Data Streaming for Explicit Algorithms - DSEA
 
-#include "dsea.h"
+#include <dsea.h>
 #include <fstream>
 
 using namespace std;
