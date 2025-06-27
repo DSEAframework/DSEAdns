@@ -41,15 +41,14 @@ To change the output directory, modify the path in the `void DS::write_vtr` func
 
 Each kernel file corresponds to a specific optimization cycle. Below is an overview of the implemented cycles:
 
-- **`dsea_kernel_cycle00_base.cu`**Baseline implementation algorithm based on Jacobs et al. [1]. Uses fixed kernel configurations with a 1D block size of 128 threads.
-- **`dsea_kernel_cycle01_0_fusing.cu`**Introduces **kernel fusion**, transitioning from task-specific kernels to data-centric kernels. Reduces the number of kernels to five and adds support for configurable thread block sizes.
-- **`dsea_kernel_cycle01_1_fusing+temporal_derivative.cu`**Moves temporal derivative calculation out of `dns_Res_StageAdvance`, reducing overall memory traffic.
-- **`dsea_kernel_cycle02_rhoETp_optimized.cu`**Splits `dns_rhoETpdxyz` into two kernels to improve memory coalescing. Uses **shared memory** and optimized **floating-point division** to reduce register pressure.
-- **`dsea_kernel_cycle03_Res_StageAdvance_optimized.cu`**Further reduces memory traffic by distributing temporal derivative computation across other kernels, saving one global store/load per result.
-- **`dsea_kernel_cycle_04_0_shared.cu`**Leverages shared memory in additional kernels to eliminate redundant memory access.
-- **`dsea_kernel_cycle_04_1_shared_schedule.cu`**Leverages **instruction-level scheduling**, overlapping shared memory loads with computations to hide memory latency.
-- **`dsea_kernel_cycle04_2_scaling.cu`**
-  Final version with hardcoded, empirically optimized thread block configurations for maximum performance.
+- `dsea_kernel_cycle00_base.cu` Baseline implementation algorithm based on Jacobs et al. [1]. Uses fixed kernel configurations with a 1D block size of 128 threads.
+- `dsea_kernel_cycle01_0_fusing.cu `Introduces **kernel fusion**, transitioning from task-specific kernels to data-centric kernels. Reduces the number of kernels to five and adds support for configurable thread block sizes.
+- `dsea_kernel_cycle01_1_fusing+temporal_derivative.cu` Moves temporal derivative calculation out of `dns_Res_StageAdvance`, reducing overall memory traffic.
+- `dsea_kernel_cycle02_rhoETp_optimized.cu` Splits `dns_rhoETpdxyz` into two kernels to improve memory coalescing. Uses **shared memory** and optimized **floating-point division** to reduce register pressure.
+- `dsea_kernel_cycle03_Res_StageAdvance_optimized.cu` Further reduces memory traffic by distributing temporal derivative computation across other kernels, saving one global store/load per result.
+- `dsea_kernel_cycle_04_0_shared.cu` Leverages shared memory in additional kernels to eliminate redundant memory access.
+- `dsea_kernel_cycle_04_1_shared_schedule.cu` Leverages **instruction-level scheduling**, overlapping shared memory loads with computations to hide memory latency.
+- `dsea_kernel_cycle04_2_scaling.cu` Final version with hardcoded, empirically optimized thread block configurations for maximum performance.
 
 > The final implementation achieves a **3× speedup** compared to the baseline.
 
