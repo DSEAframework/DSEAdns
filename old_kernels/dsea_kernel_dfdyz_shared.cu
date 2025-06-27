@@ -104,10 +104,13 @@ __global__ void dns_dfdx(int32_t i_worker, int32_t order_in, int32_t order_out,
 
 	// Calculate position in part
 	//int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
 
 	int32_t col_in_block, row_in_block;
+	int32_t idx = thread_to_global_idx(1024, tidx, 128, 1, 32, 1, &col_in_block, &row_in_block);
 
+	
+	 blockIdx.x*blockDim.x+threadIdx.x;
 
 	if (idx<block_ncc) {
 		dfdx[idx] = 1/DX * (1./12. * sy_bc_ll *  f_ll[idx] - 2./3. * sy_bc_l * f_l[idx] + 2./3. * sy_bc_r * f_r[idx] - 1./12. * sy_bc_rr * f_rr[idx]); 
@@ -142,9 +145,10 @@ __global__ void dns_dfdy(int32_t i_worker, int32_t order_in, int32_t order_out,
 	// Calculate position in part
 	//int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
 
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
 
 	int32_t col_in_block, row_in_block;
+	int32_t idx = thread_to_global_idx(1024, tidx, 128, 1, 32, 1, &col_in_block, &row_in_block);
 
 	if (idx<block_ncc) {
 		int32_t Y, Z;
@@ -194,9 +198,10 @@ __global__ void dns_dfdz(int32_t i_worker, int32_t order_in, int32_t order_out,
 	// Calculate position in part
 	//int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
 
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
 
 	int32_t col_in_block, row_in_block;
+	int32_t idx = thread_to_global_idx(1024, tidx, 128, 1, 32, 1, &col_in_block, &row_in_block);
 
 	if (idx<block_ncc) {
 		int32_t Y, Z;
@@ -308,6 +313,197 @@ __global__ void dns_dfd2z(int32_t i_worker, int32_t order_in, int32_t order_out,
 	}
 }
 
+// Version with 1D Kernel Call must be called with nof threads = problemsize
+__global__ void dns_dfdyz_shared(int32_t i_worker, int32_t order_in, int32_t order_out, int32_t problemsize,
+						int32_t block_size_z, int32_t block_size_y, int32_t warp_size_z, int32_t warp_size_y,
+						/*order 0*/ double * __restrict__ f,
+						/*order 0*/ double * __restrict__ dfdy,
+						/*order 0*/ double * __restrict__ dfdz) {
+
+	__shared__ float s_d[BLOCKSIZE_Y+4][BLOCKSIZE_Z+4]; // 4-wide halo
+	// Thread Idx
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
+	// Global Idx
+	int32_t gidx;
+	// Idx in Block
+	int32_t col_in_block, row_in_block;
+	// Global Idx
+	//gidx = thread_to_global_idx(problemsize, tidx, block_size_z, block_size_y, warp_size_z, warp_size_y, &col_in_block, &row_in_block);
+	gidx = thread_to_global_idx(1024, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
+
+
+	if (gidx<block_ncc) {
+		row_in_block+=2;
+		col_in_block+=2;
+		//dfdx[gidx] = tidx;
+		s_d[row_in_block][col_in_block] = f[gidx];
+
+		int32_t Y, Z;
+		int32_t dy_ll, dy_l, dy_r, dy_rr;
+		int32_t dz_ll, dz_l, dz_r, dz_rr;
+		COORDS(gidx, Y, Z, NZ);
+
+		// get halos
+		if (row_in_block < 4) {
+			IDX((NY+Y-2)%NY, Z, dy_ll, NZ);
+			s_d[row_in_block-2][col_in_block] = f[dy_ll];
+		}
+		if (row_in_block >= block_size_y) {
+			IDX((NY+Y+2)%NY, Z, dy_rr, NZ);
+			s_d[row_in_block+2][col_in_block] = f[dy_rr];
+		}
+		if (col_in_block < 4) {
+			IDX(Y, (NZ+Z-2)%NZ, dz_ll, NZ);
+			s_d[row_in_block][col_in_block-2] = f[dz_ll];
+		}
+		if (col_in_block >= block_size_z) {
+			IDX(Y, (NZ+Z+2)%NZ, dz_rr, NZ);
+			s_d[row_in_block][col_in_block+2] = f[dz_rr];
+		}
+
+		__syncthreads();
+
+		dfdz[gidx] = 1/DZ * (1./12. * s_d[row_in_block][col_in_block-2] - 2./3. * s_d[row_in_block][col_in_block-1] 
+												+ 2./3. * s_d[row_in_block][col_in_block+1]  - 1./12. * s_d[row_in_block][col_in_block+2]); 
+
+		dfdy[gidx] = 1/DY * (1./12. * s_d[row_in_block-2][col_in_block] - 2./3. * s_d[row_in_block-1][col_in_block] 
+												+ 2./3. * s_d[row_in_block+1][col_in_block]  - 1./12. * s_d[row_in_block+2][col_in_block]); 
+
+	}
+}
+
+// Version with 1D Kernel Call must be called with nof threads = problemsize
+__global__ void dns_dfdyz(int32_t i_worker, int32_t order_in, int32_t order_out, int32_t problemsize,
+						int32_t block_size_z, int32_t block_size_y, int32_t warp_size_z, int32_t warp_size_y,
+						/*order 0*/ double * __restrict__ f,
+						/*order 0*/ double * __restrict__ dfdy,
+						/*order 0*/ double * __restrict__ dfdz) {
+	// Thread Idx
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
+	// Global Idx
+	int32_t gidx;
+	// Idx in Block
+	int32_t col_in_block, row_in_block;
+	// Global Idx
+	//gidx = thread_to_global_idx(problemsize, tidx, block_size_z, block_size_y, warp_size_z, warp_size_y, &col_in_block, &row_in_block);
+	gidx = thread_to_global_idx(1024, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
+
+
+	if (gidx<block_ncc) {
+		//dfdx[gidx] = tidx;
+
+		int32_t Y, Z;
+		int32_t dy_ll, dy_l, dy_r, dy_rr;
+		int32_t dz_ll, dz_l, dz_r, dz_rr;
+		COORDS(gidx, Y, Z, NZ);
+		
+		// Calculate idx with periodic boundary condition
+		IDX((NY+Y-2)%NY, Z, dy_ll, NZ);
+		IDX((NY+Y-1)%NY, Z, dy_l, NZ);
+		IDX((NY+Y+1)%NY, Z, dy_r, NZ);
+		IDX((NY+Y+2)%NY, Z, dy_rr, NZ);
+
+		// Calculate idx with periodic boundary condition
+		IDX(Y, (NZ+Z-2)%NZ, dz_ll, NZ);
+		IDX(Y, (NZ+Z-1)%NZ, dz_l, NZ);
+		IDX(Y, (NZ+Z+1)%NZ, dz_r, NZ);
+		IDX(Y, (NZ+Z+2)%NZ, dz_rr, NZ);
+
+		dfdz[gidx] = 1/DZ * (1./12. * f[dz_ll] - 2./3. * f[dz_l] + 2./3. * f[dz_r] - 1./12. * f[dz_rr]); 
+		dfdy[gidx] = 1/DY * (1./12. * f[dy_ll] - 2./3. * f[dy_l] + 2./3. * f[dy_r] - 1./12. * f[dy_rr]); 
+
+	}
+}
+
+
+
+#ifdef DOPTI2
+
+__global__ void dns_du0dxyz(int32_t i_worker, int32_t order_in, int32_t order_out, int32_t problemsize,
+						int32_t block_size_z, int32_t block_size_y, int32_t warp_size_z, int32_t warp_size_y,
+						/*order 0*/ double * __restrict__ irho_c,
+						/*order 1*/ double * __restrict__ irho_l, double * __restrict__ irho_r,
+						/*order 2*/ double * __restrict__ irho_ll, double * __restrict__ irho_rr,
+						/*order 0*/ double * __restrict__ irhou0_c,
+						/*order 1*/ double * __restrict__ irhou0_l, double * __restrict__ irhou0_r,
+						/*order 2*/ double * __restrict__ irhou0_ll, double * __restrict__ irhou0_rr,
+						int sy_bc_ll = 1, int sy_bc_l = 1, int sy_bc_r = 1, int sy_bc_rr = 1,
+						/*order 0*/ double * __restrict__ odrhou0dx,
+						/*order 0*/ double * __restrict__ odrhou0dy,
+						/*order 0*/ double * __restrict__ odrhou0dz,
+						/*order 0*/ double * __restrict__ odu0dx,
+						/*order 0*/ double * __restrict__ odu0dy,
+						/*order 0*/ double * __restrict__ odu0dz,
+						/*order 0*/ double * __restrict__ odu0d2x,
+						/*order 0*/ double * __restrict__ odu0d2y,
+						/*order 0*/ double * __restrict__ odu0d2z,
+						/*order 0*/ double * __restrict__ odrhou0u0dx,
+						/*order 0*/ double * __restrict__ dfdz) {
+	// Thread Idx
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
+	// Global Idx
+	int32_t gidx;
+	// Idx in Block
+	int32_t col_in_block, row_in_block;
+	// Global Idx
+	//gidx = thread_to_global_idx(problemsize, tidx, block_size_z, block_size_y, warp_size_z, warp_size_y, &col_in_block, &row_in_block);
+	gidx = thread_to_global_idx(1024, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
+
+
+	if (gidx<block_ncc) {
+		//dfdx[gidx] = tidx;
+
+		int32_t Y, Z;
+		int32_t dy_ll, dy_l, dy_r, dy_rr;
+		int32_t dz_ll, dz_l, dz_r, dz_rr;
+		COORDS(gidx, Y, Z, NZ);
+		
+		// Calculate idx with periodic boundary condition
+		IDX((NY+Y-2)%NY, Z, dy_ll, NZ);
+		IDX((NY+Y-1)%NY, Z, dy_l, NZ);
+		IDX((NY+Y+1)%NY, Z, dy_r, NZ);
+		IDX((NY+Y+2)%NY, Z, dy_rr, NZ);
+
+		// Calculate idx with periodic boundary condition
+		IDX(Y, (NZ+Z-2)%NZ, dz_ll, NZ);
+		IDX(Y, (NZ+Z-1)%NZ, dz_l, NZ);
+		IDX(Y, (NZ+Z+1)%NZ, dz_r, NZ);
+		IDX(Y, (NZ+Z+2)%NZ, dz_rr, NZ);
+
+
+		double rhou0_dy_ll, rhou0_dy_l, rhou0_dy_c, rhou0_dy_r, rhou0_dy_rr;
+		double rho_dy_ll, rho_dy_l, rho_dy_c, rho_dy_r, rho_dy_rr;
+		double u0_dy_ll, u0_dy_l, u0_dy_c, u0_dy_r, u0_dy_rr;
+
+		odrhou0dy[idx] = 1/DY * (1./12. * rhou0_dy_ll - 2./3. * rhou0_dy_l + 2./3. * rhou0_dy_r - 1./12. * rhou0_dy_rr);
+		odu0dy[idx] = 1/DY * (1./12. * u0_dy_ll - 2./3. * u0_dy_l + 2./3. * u0_dy_r - 1./12. * u0_dy_rr);
+		odu0d2y[idx] =1/(DY*DY) * (-1./12. * u0_dy_ll + 4./3. * u0_dy_l - 5./2. * u0_dy_c + 4./3. * u0_dy_r - 1./12. * u0_dy_rr);
+
+
+		double rhou0_dz_ll, rhou0_dz_l, rhou0_dz_c, rhou0_dz_r, rhou0_dz_rr;
+		double rho_dz_ll, rho_dz_l, rho_dz_c, rho_dz_r, rho_dz_rr;
+		double u0_dz_ll, u0_dz_l, u0_dz_c, u0_dz_r, u0_dz_rr;
+		
+		odrhou0dz[idx] = 1/DZ * (1./12. * rhou0_dz_ll - 2./3. * rhou0_dz_l + 2./3. * rhou0_dz_r - 1./12. * rhou0_dz_rr);
+		odu0dz[idx] = 1/DZ * (1./12. * u0_dz_ll - 2./3. * u0_dz_l + 2./3. * u0_dz_r - 1./12. * u0_dz_rr);
+		odu0d2z[idx] =1/(DZ*DZ) * (-1./12. * u0_dz_ll + 4./3. * u0_dz_l - 5./2. * u0_dz_c + 4./3. * u0_dz_r - 1./12. * u0_dz_rr);
+
+
+		double rhou0_dx_ll, rhou0_dx_l, rhou0_dx_c, rhou0_dx_r, rhou0_dx_rr;
+		double rho_dx_ll, rho_dx_l, rho_dx_c, rho_dx_r, rho_dx_rr;
+		double u0_dx_ll, u0_dx_l, u0_dx_c, u0_dx_r, u0_dx_rr;
+
+
+		odrhou0dx[idx] = 1/DX * (1./12. * sy_bc_ll *  rhou0_dx_ll - 2./3. * sy_bc_l * rhou0_dx_l + 2./3. * sy_bc_r * rhou0_dx_r - 1./12. * sy_bc_rr * rhou0_dx_rr);
+		odu0dx[idx] = 1/DX * (1./12. * sy_bc_ll *  u0_dx_ll - 2./3. * sy_bc_l * u0_dx_l + 2./3. * sy_bc_r * u0_dx_r - 1./12. * sy_bc_rr * u0_dx_rr);
+		odu0d2x[idx] = 1/(DX*DX) * (-1./12. * sy_bc_ll * u0_dx_ll + 4./3. * sy_bc_l * u0_dx_l - 5./2. * u0_dx_c + 4./3. * sy_bc_r * u0_dx_r - 1./12. * sy_bc_rr * u0_dx_rr); 
+		
+		odrhou0u0dx[idx] = 1/DX * (1./12. * (sy_bc_ll * rhou0_dx_ll * sy_bc_ll * u0_dx_ll) - 2./3. * (sy_bc_l * rhou0_dx_l * sy_bc_l * u0_dx_l) 
+											 + 2./3. * (sy_bc_r * rhou0_dx_r * sy_bc_r * u0_dx_r) - 1./12. * (sy_bc_rr * rhou0_dx_rr * sy_bc_rr * u0_dx_rr));
+	}
+}
+
+#endif
 
 __global__ void dns_Res_v1(int32_t i_worker, int32_t order_in, int32_t order_out,
 						/*order 0*/ double * __restrict__ rho,
@@ -896,18 +1092,10 @@ void DS::caller_worker (double ** p_in, double ** p_out, int32_t i_part, int32_t
 	int32_t n_global_worker = n_procs * n_worker;
 	int32_t stage = (global_worker_id + n_global_worker * i_super_cycle) % 3;
 
-	if (myID == 0 && i_super_cycle < 1) {
-
-		//cout << "Worker: " << global_worker_id << " processing slice: " << i_part << endl;
-	
-	}
-
 	//cout << "Working on stage " << stage << endl;
 
 	double rkold = RKOLD[stage];
 	double rknew = RKNEW[stage];
-
-	//cout << "global_worker_id: " << global_worker_id << ", nworker: " << nworker << ", myID: " << myID << ", iworker: " << iworker << ", n_global_worker: " << n_global_worker << ", n_procs" << n_procs << ", n_worker: " << n_worker << ", stage: " << stage << ", i_super_cycle: " << i_super_cycle << endl;
 
 	//cout << "rkold " << rkold << " rknew " << rknew << endl;
 
@@ -1013,46 +1201,66 @@ void DS::caller_worker (double ** p_in, double ** p_out, int32_t i_part, int32_t
 	dns_T <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_ll[offset_rho], (double*) d_p_ll, (double*) d_T_ll);
 	dns_T <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_rr[offset_rho], (double*) d_p_rr, (double*) d_T_rr);
 
+	//30
+	int32_t threads_per_block_opti = BLOCKSIZE_Z * BLOCKSIZE_Y;
+	int32_t gridSize_opti = (blockSize + threads_per_block_opti - 1) / threads_per_block_opti;
 
 	// du0dx, du0dy, du0dz
 	dns_dfdx <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u0_l, (double*) d_u0_r, (double*) d_u0_ll, (double*) d_u0_rr, (double*) d_du0dx, sy_bc_ll, sy_bc_l, sy_bc_r, sy_bc_rr);
-	dns_dfdy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u0_c, (double*) d_du0dy);
-	dns_dfdz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u0_c, (double*) d_du0dz);
+	dns_dfdyz_shared <<<gridSize_opti,threads_per_block_opti,0,*stream>>>(0, 0, 0, my_n_part, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y,
+						(double*) d_u0_c,
+						(double*) d_du0dy,
+						(double*) d_du0dz);
 
 	// du1dx, du1dy, du1dz
 	dns_dfdx <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u1_l, (double*) d_u1_r, (double*) d_u1_ll, (double*) d_u1_rr, (double*) d_du1dx);
-	dns_dfdy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u1_c, (double*) d_du1dy);
-	dns_dfdz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u1_c, (double*) d_du1dz);
+	dns_dfdyz_shared <<<gridSize_opti,threads_per_block_opti,0,*stream>>>(0, 0, 0, my_n_part, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y,
+						(double*) d_u1_c,
+						(double*) d_du1dy,
+						(double*) d_du1dz);
 
 	// du2dx, du2dy, du2dz
 	dns_dfdx <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u2_l, (double*) d_u2_r, (double*) d_u2_ll, (double*) d_u2_rr, (double*) d_du2dx);
-	dns_dfdy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u2_c, (double*) d_du2dy);
-	dns_dfdz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u2_c, (double*) d_du2dz);
+	dns_dfdyz_shared <<<gridSize_opti,threads_per_block_opti,0,*stream>>>(0, 0, 0, my_n_part, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y,
+						(double*) d_u2_c,
+						(double*) d_du2dy,
+						(double*) d_du2dz);
 
 	// drhodx, drhody, drhodz
 	dns_dfdx <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_l[offset_rho], &p_r[offset_rho], &p_ll[offset_rho], &p_rr[offset_rho], (double*) d_drhodx);
-	dns_dfdy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rho], (double*) d_drhody);
-	dns_dfdz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rho], (double*) d_drhodz);
+	dns_dfdyz_shared <<<gridSize_opti,threads_per_block_opti,0,*stream>>>(0, 0, 0, my_n_part, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y,
+						&p_c[offset_rho],
+						(double*) d_drhody,
+						(double*) d_drhodz);
+
 
 	// drhou0dx, drhou0dy, drhou0dz
 	dns_dfdx <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_l[offset_rhou0], &p_r[offset_rhou0], &p_ll[offset_rhou0], &p_rr[offset_rhou0], (double*) d_drhou0dx, sy_bc_ll, sy_bc_l, sy_bc_r, sy_bc_rr);
-	dns_dfdy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou0], (double*) d_drhou0dy);
-	dns_dfdz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou0], (double*) d_drhou0dz);
+	dns_dfdyz_shared <<<gridSize_opti,threads_per_block_opti,0,*stream>>>(0, 0, 0, my_n_part, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y,
+						&p_c[offset_rhou0],
+						(double*) d_drhou0dy,
+						(double*) d_drhou0dz);
 
 	// drhou1dx, drhou1dy, drhou1dz
 	dns_dfdx <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_l[offset_rhou1], &p_r[offset_rhou1], &p_ll[offset_rhou1], &p_rr[offset_rhou1], (double*) d_drhou1dx);
-	dns_dfdy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou1], (double*) d_drhou1dy);
-	dns_dfdz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou1], (double*) d_drhou1dz);
+	dns_dfdyz_shared <<<gridSize_opti,threads_per_block_opti,0,*stream>>>(0, 0, 0, my_n_part, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y,
+						&p_c[offset_rhou1],
+						(double*) d_drhou1dy,
+						(double*) d_drhou1dz);
 
 	// drhou2dx, drhou2dy, drhou2dz
 	dns_dfdx <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_l[offset_rhou2], &p_r[offset_rhou2], &p_ll[offset_rhou2], &p_rr[offset_rhou2], (double*) d_drhou2dx);
-	dns_dfdy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou2], (double*) d_drhou2dy);
-	dns_dfdz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou2], (double*) d_drhou2dz);
+	dns_dfdyz_shared <<<gridSize_opti,threads_per_block_opti,0,*stream>>>(0, 0, 0, my_n_part, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y,
+						&p_c[offset_rhou2],
+						(double*) d_drhou2dy,
+						(double*) d_drhou2dz);
 
 	// dpdx, dpdy, dpdz
 	dns_dfdx <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_p_l, (double*) d_p_r, (double*) d_p_ll, (double*) d_p_rr, (double*) d_dpdx);
-	dns_dfdy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_p_c, (double*) d_dpdy);
-	dns_dfdz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_p_c, (double*) d_dpdz);
+	dns_dfdyz_shared <<<gridSize_opti,threads_per_block_opti,0,*stream>>>(0, 0, 0, my_n_part, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y,
+						(double*) d_p_c,
+						(double*) d_dpdy,
+						(double*) d_dpdz);
 
 	// drhou0u0dx, drhou0u1dy, drhou0u2dz
 	dns_dfgdx <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_l[offset_rhou0], &p_r[offset_rhou0], &p_ll[offset_rhou0], &p_rr[offset_rhou0],
@@ -1092,12 +1300,12 @@ void DS::caller_worker (double ** p_in, double ** p_out, int32_t i_part, int32_t
 	dns_dfdy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_du0dx, (double*) d_du0dxdy);
 	dns_dfdz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_du0dx, (double*) d_du0dxdz);
 
-	// ddns_dfgdz
+	// du1dxdy, du1dydz
 	dns_dfdy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_du1dx, (double*) d_du1dxdy);
 	dns_dfdz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_du1dy, (double*) d_du1dydz);
 
 	// du2dxdz, du2dydz
-	dns_dfdz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_du2dx, (double*) d_du2dxdz);
+	dns_dfdy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_du2dx, (double*) d_du2dxdz);
 	dns_dfdz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_du2dy, (double*) d_du2dydz);
 	// 3 * 2
 	// dpu0dx, dpu1dy, dpu2dz
@@ -1113,8 +1321,10 @@ void DS::caller_worker (double ** p_in, double ** p_out, int32_t i_part, int32_t
 
 	// drhoEdx, drhoEdy, drhoEdz
 	dns_dfdx <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_l[offset_rhoE], &p_r[offset_rhoE], &p_ll[offset_rhoE], &p_rr[offset_rhoE], (double*) d_drhoEdx);
-	dns_dfdy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhoE], (double*) d_drhoEdy);
-	dns_dfdz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhoE], (double*) d_drhoEdz);
+	dns_dfdyz_shared <<<gridSize_opti,threads_per_block_opti,0,*stream>>>(0, 0, 0, my_n_part, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y,
+						&p_c[offset_rhoE],
+						(double*) d_drhoEdy,
+						(double*) d_drhoEdz);
 
 	// drhoEu0dx, drhoEu1dy, drhoEu2dz
 	dns_dfgdx <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_l[offset_rhoE], &p_r[offset_rhoE], &p_ll[offset_rhoE], &p_rr[offset_rhoE],
@@ -1159,17 +1369,17 @@ void DS::caller_worker (double ** p_in, double ** p_out, int32_t i_part, int32_t
 						(double*) d_Res_rhou2,
 						(double*) d_Res_rhoE);
 
-	dns_RKsubStage <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0,
-				&p_c_out[offset_rho], 
-				&p_c_out[offset_rhou0], &p_c_out[offset_rhou1], &p_c_out[offset_rhou2],
-				&p_c_out[offset_rhoE],
-				&p_c[offset_rho_old],
-				&p_c[offset_rhou0_old], &p_c[offset_rhou1_old], &p_c[offset_rhou2_old],
-				&p_c[offset_rhoE_old],
-				(double*) d_Res_rho,
-				(double*) d_Res_rhou0, (double*) d_Res_rhou1, (double*) d_Res_rhou2, 
-				(double*) d_Res_rhoE,
-				rknew);
+		dns_RKsubStage <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0,
+					&p_c_out[offset_rho], 
+					&p_c_out[offset_rhou0], &p_c_out[offset_rhou1], &p_c_out[offset_rhou2],
+					&p_c_out[offset_rhoE],
+					&p_c[offset_rho_old],
+					&p_c[offset_rhou0_old], &p_c[offset_rhou1_old], &p_c[offset_rhou2_old],
+					&p_c[offset_rhoE_old],
+					(double*) d_Res_rho,
+					(double*) d_Res_rhou0, (double*) d_Res_rhou1, (double*) d_Res_rhou2, 
+					(double*) d_Res_rhoE,
+					rknew);
 	
 	dns_RKtmpAdvance <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0,
 					&p_c_out[offset_rho_old],
@@ -1182,7 +1392,6 @@ void DS::caller_worker (double ** p_in, double ** p_out, int32_t i_part, int32_t
 					(double*) d_Res_rhou0, (double*) d_Res_rhou1, (double*) d_Res_rhou2, 
 					(double*) d_Res_rhoE,
 					rkold);
-
 
 	//dns_copy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_Res_rho, &p_c[offset_tmp0]);
 	//dns_copy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_Res_rhou0, &p_c[offset_tmp1]);
@@ -1214,7 +1423,7 @@ __global__ void prepare_visual_rectilinear(double * __restrict__ p_in, double * 
 	// 	printf("part:%i\n",i_part);
 	// }
 
-	double * p_out_double=(double*)p_out;
+	float * p_out_float=(float*)p_out;
 
 
 	// if (global_id==0) {
@@ -1248,15 +1457,15 @@ __global__ void prepare_visual_rectilinear(double * __restrict__ p_in, double * 
 			
 			//double dtmp = 5.0;
 
-			p_out_double[i_field*my_n_part*block_ncc+i_z*block_ncc+i_y*my_n_part+i_x]=dtmp;
+			p_out_float[i_field*my_n_part*block_ncc+i_z*block_ncc+i_y*my_n_part+i_x]=dtmp;
 		}
 	}
 
 }
 
-void DS::write_vtr (double * p_data, int32_t i_part, int32_t i_cycle) {
+void DS::write_vtr (float * p_data, int32_t i_part, int32_t i_cycle) {
 	string FileName;
-	FileName.append("/direc/visual_");
+	FileName.append("visual/visual_");
 	FileName+=to_string(my_n_part);
 	FileName.append("_");
 	FileName+=to_string(i_cycle);
@@ -1287,121 +1496,121 @@ void DS::write_vtr (double * p_data, int32_t i_part, int32_t i_cycle) {
 		ofs << "<Piece Extent=\"" << "0 " << my_n_part-1 << " 0 " << my_n_part-1 << " 0 " << my_n_part-1 << "\">" << endl;
 
 		ofs << "<PointData Scalars=\"\" Name=\"a\">" << endl;
-		ofs << "<DataArray type=\"Float64\" Name=\"rho\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
+		ofs << "<DataArray type=\"Float32\" Name=\"rho\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
 		ofs << append_offset;
 		ofs << "\">";
 		ofs << "</DataArray>" << endl;
-		append_offset+=(my_n_part*block_ncc)*sizeof(double)+sizeof(int64_t);
+		append_offset+=(my_n_part*block_ncc)*sizeof(float)+sizeof(int64_t);
 
-		ofs << "<DataArray type=\"Float64\" Name=\"rhou0\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
+		ofs << "<DataArray type=\"Float32\" Name=\"rhou0\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
 		ofs << append_offset;
 		ofs << "\">";
 		ofs << "</DataArray>" << endl;
-		append_offset+=(my_n_part*block_ncc)*sizeof(double)+sizeof(int64_t);
+		append_offset+=(my_n_part*block_ncc)*sizeof(float)+sizeof(int64_t);
 
-		ofs << "<DataArray type=\"Float64\" Name=\"rhou1\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
+		ofs << "<DataArray type=\"Float32\" Name=\"rhou1\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
 		ofs << append_offset;
 		ofs << "\">";
 		ofs << "</DataArray>" << endl;
-		append_offset+=(my_n_part*block_ncc)*sizeof(double)+sizeof(int64_t);
+		append_offset+=(my_n_part*block_ncc)*sizeof(float)+sizeof(int64_t);
 
-		ofs << "<DataArray type=\"Float64\" Name=\"rhou2\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
+		ofs << "<DataArray type=\"Float32\" Name=\"rhou2\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
 		ofs << append_offset;
 		ofs << "\">";
 		ofs << "</DataArray>" << endl;
-		append_offset+=(my_n_part*block_ncc)*sizeof(double)+sizeof(int64_t);
+		append_offset+=(my_n_part*block_ncc)*sizeof(float)+sizeof(int64_t);
 
-		ofs << "<DataArray type=\"Float64\" Name=\"rhoE\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
+		ofs << "<DataArray type=\"Float32\" Name=\"rhoE\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
 		ofs << append_offset;
 		ofs << "\">";
 		ofs << "</DataArray>" << endl;
-		append_offset+=(my_n_part*block_ncc)*sizeof(double)+sizeof(int64_t);
+		append_offset+=(my_n_part*block_ncc)*sizeof(float)+sizeof(int64_t);
 
-		ofs << "<DataArray type=\"Float64\" Name=\"rho_old\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
+		ofs << "<DataArray type=\"Float32\" Name=\"rho_old\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
 		ofs << append_offset;
 		ofs << "\">";
 		ofs << "</DataArray>" << endl;
-		append_offset+=(my_n_part*block_ncc)*sizeof(double)+sizeof(int64_t);
+		append_offset+=(my_n_part*block_ncc)*sizeof(float)+sizeof(int64_t);
 
-		ofs << "<DataArray type=\"Float64\" Name=\"rhou0_old\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
+		ofs << "<DataArray type=\"Float32\" Name=\"rhou0_old\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
 		ofs << append_offset;
 		ofs << "\">";
 		ofs << "</DataArray>" << endl;
-		append_offset+=(my_n_part*block_ncc)*sizeof(double)+sizeof(int64_t);
+		append_offset+=(my_n_part*block_ncc)*sizeof(float)+sizeof(int64_t);
 
-		ofs << "<DataArray type=\"Float64\" Name=\"rhou1_old\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
+		ofs << "<DataArray type=\"Float32\" Name=\"rhou1_old\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
 		ofs << append_offset;
 		ofs << "\">";
 		ofs << "</DataArray>" << endl;
-		append_offset+=(my_n_part*block_ncc)*sizeof(double)+sizeof(int64_t);
+		append_offset+=(my_n_part*block_ncc)*sizeof(float)+sizeof(int64_t);
 		
-		ofs << "<DataArray type=\"Float64\" Name=\"rhou2_old\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
+		ofs << "<DataArray type=\"Float32\" Name=\"rhou2_old\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
 		ofs << append_offset;
 		ofs << "\">";
 		ofs << "</DataArray>" << endl;
-		append_offset+=(my_n_part*block_ncc)*sizeof(double)+sizeof(int64_t);
+		append_offset+=(my_n_part*block_ncc)*sizeof(float)+sizeof(int64_t);
 
-		ofs << "<DataArray type=\"Float64\" Name=\"rhoE_old\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
+		ofs << "<DataArray type=\"Float32\" Name=\"rhoE_old\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
 		ofs << append_offset;
 		ofs << "\">";
 		ofs << "</DataArray>" << endl;
-		append_offset+=(my_n_part*block_ncc)*sizeof(double)+sizeof(int64_t);
+		append_offset+=(my_n_part*block_ncc)*sizeof(float)+sizeof(int64_t);
 
 		// ============================ TMP Output ============================
-		//ofs << "<DataArray type=\"Float64\" Name=\"tmp0\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
+		//ofs << "<DataArray type=\"Float32\" Name=\"tmp0\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
 		//ofs << append_offset;
 		//ofs << "\">";
 		//ofs << "</DataArray>" << endl;
-		//append_offset+=(my_n_part*block_ncc)*sizeof(double)+sizeof(int64_t);
+		//append_offset+=(my_n_part*block_ncc)*sizeof(float)+sizeof(int64_t);
 //
-		//ofs << "<DataArray type=\"Float64\" Name=\"tmp1\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
+		//ofs << "<DataArray type=\"Float32\" Name=\"tmp1\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
 		//ofs << append_offset;
 		//ofs << "\">";
 		//ofs << "</DataArray>" << endl;
-		//append_offset+=(my_n_part*block_ncc)*sizeof(double)+sizeof(int64_t);
+		//append_offset+=(my_n_part*block_ncc)*sizeof(float)+sizeof(int64_t);
 //
-		//ofs << "<DataArray type=\"Float64\" Name=\"tmp2\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
+		//ofs << "<DataArray type=\"Float32\" Name=\"tmp2\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
 		//ofs << append_offset;
 		//ofs << "\">";
 		//ofs << "</DataArray>" << endl;
-		//append_offset+=(my_n_part*block_ncc)*sizeof(double)+sizeof(int64_t);
+		//append_offset+=(my_n_part*block_ncc)*sizeof(float)+sizeof(int64_t);
 //
-		//ofs << "<DataArray type=\"Float64\" Name=\"tmp3\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
+		//ofs << "<DataArray type=\"Float32\" Name=\"tmp3\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
 		//ofs << append_offset;
 		//ofs << "\">";
 		//ofs << "</DataArray>" << endl;
-		//append_offset+=(my_n_part*block_ncc)*sizeof(double)+sizeof(int64_t);
+		//append_offset+=(my_n_part*block_ncc)*sizeof(float)+sizeof(int64_t);
 //
-		//ofs << "<DataArray type=\"Float64\" Name=\"tmp4\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
+		//ofs << "<DataArray type=\"Float32\" Name=\"tmp4\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
 		//ofs << append_offset;
 		//ofs << "\">";
 		//ofs << "</DataArray>" << endl;
-		//append_offset+=(my_n_part*block_ncc)*sizeof(double)+sizeof(int64_t);
+		//append_offset+=(my_n_part*block_ncc)*sizeof(float)+sizeof(int64_t);
 //
 		// ============================ TMP Output ============================
 
 		ofs << "</PointData>" << endl;
 
 		ofs << "<Coordinates>" << endl;
-		ofs << "<DataArray type=\"Float64\" Name=\"Points\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
+		ofs << "<DataArray type=\"Float32\" Name=\"Points\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
 		ofs << append_offset;
 		ofs << "\">";
 		ofs << "</DataArray>" << endl;
-		append_offset+=(my_n_part+1)*sizeof(double)+sizeof(int64_t);
+		append_offset+=(my_n_part+1)*sizeof(float)+sizeof(int64_t);
 
-		ofs << "<DataArray type=\"Float64\" Name=\"Points\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
+		ofs << "<DataArray type=\"Float32\" Name=\"Points\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
 		ofs << append_offset;
 		ofs << "\">";
 		// ofs << "\" RangeMin=\"0\" RangeMax=\"1.0\">" << endl;
 		ofs << "</DataArray>" << endl;
-		append_offset+=(my_n_part+1)*sizeof(double)+sizeof(int64_t);
+		append_offset+=(my_n_part+1)*sizeof(float)+sizeof(int64_t);
 
-		ofs << "<DataArray type=\"Float64\" Name=\"Points\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
+		ofs << "<DataArray type=\"Float32\" Name=\"Points\" NumberOfComponents=\"1\" format=\"appended\" offset=\"";
 		ofs << append_offset;
 		ofs << "\">";
 		// ofs << "\" RangeMin=\"0\" RangeMax=\"1.0\">" << endl;
 		ofs << "</DataArray>" << endl;
-		append_offset+=(my_n_part+1)*sizeof(double)+sizeof(int64_t);
+		append_offset+=(my_n_part+1)*sizeof(float)+sizeof(int64_t);
 
 		ofs << "</Coordinates>" << endl;
 
@@ -1412,7 +1621,7 @@ void DS::write_vtr (double * p_data, int32_t i_part, int32_t i_cycle) {
 		// ofs << "</PointData>" << endl;
 		// ofs << "<Points>" << endl;
 		// ofs << "<DataArray type=\"Float32\" Name=\"Points\" NumberOfComponents=\"3\" format=\"appended\" offset=\"";
-		// ofs << n_mol*sizeof(double)+8;
+		// ofs << n_mol*sizeof(float)+8;
 		// ofs << "\" RangeMin=\"0\" RangeMax=\"1.0\">" << endl;
 		// ofs << "</DataArray>" << endl;
 		// ofs << "</Points>" << endl;
@@ -1433,25 +1642,25 @@ void DS::write_vtr (double * p_data, int32_t i_part, int32_t i_cycle) {
 
 	// cell data
 	for (int32_t i_field=0;i_field<block_n_fields;i_field++) {
-		size_append=(my_n_part*block_ncc)*sizeof(double);
+		size_append=(my_n_part*block_ncc)*sizeof(float);
 		MemToFile(&size_append,sizeof(int64_t),(char*)FileName.c_str(),0);
 		MemToFile((int64_t*)&p_data[i_field*my_n_part*block_ncc],size_append,(char*)FileName.c_str(),0);
 	}
 
 	// coordinates - same for x,y,z
-	double * x_coordinates=new double [my_n_part+1];
+	float * x_coordinates=new float [my_n_part+1];
 	for (int i=0;i<my_n_part+1;i++) {
 		x_coordinates[i]=i;
 	}
-	size_append=(my_n_part+1)*sizeof(double);
+	size_append=(my_n_part+1)*sizeof(float);
 	MemToFile(&size_append,sizeof(int64_t),(char*)FileName.c_str(),0);
 	MemToFile((int64_t*)x_coordinates,size_append,(char*)FileName.c_str(),0);
 
-	size_append=(my_n_part+1)*sizeof(double);
+	size_append=(my_n_part+1)*sizeof(float);
 	MemToFile(&size_append,sizeof(int64_t),(char*)FileName.c_str(),0);
 	MemToFile((int64_t*)x_coordinates,size_append,(char*)FileName.c_str(),0);
 
-	size_append=(my_n_part+1)*sizeof(double);
+	size_append=(my_n_part+1)*sizeof(float);
 	MemToFile(&size_append,sizeof(int64_t),(char*)FileName.c_str(),0);
 	MemToFile((int64_t*)x_coordinates,size_append,(char*)FileName.c_str(),0);
 	delete [] x_coordinates;
@@ -1475,7 +1684,7 @@ void DS::caller_output_vtk_rectilinear (double * p_in, double * p_out, cudaStrea
 	// float * p_my_vis_float=(float*)p_my_vis;
 	if (i_part==(my_n_part-1)) {
 		// last part
-		double * p_my_vis_double=new double[block_n_fields*my_n_part*block_ncc];
+		float * p_my_vis_float=new float[block_n_fields*my_n_part*block_ncc];
 
 		cudaDeviceSynchronize();        cudaCheckError(__LINE__,__FILE__);
 
@@ -1483,10 +1692,10 @@ void DS::caller_output_vtk_rectilinear (double * p_in, double * p_out, cudaStrea
 		copy_size*=block_n_fields;
 		copy_size*=my_n_part;
 		copy_size*=block_ncc;
-		copy_size*=sizeof(double);
+		copy_size*=sizeof(float);
 		// cout << copy_size << endl;
-		cudaError_t cer=cudaMemcpy((void*)p_my_vis_double,(const void*)p_out,copy_size,cudaMemcpyDeviceToHost); //cudaCheckError(__LINE__,__FILE__);
-		cout << cer << endl;
+		cudaMemcpy((void*)p_my_vis_float,(const void*)p_out,copy_size,cudaMemcpyDeviceToHost);
+
 		// for (int i=0;i<block_n_fields*my_n_part*block_ncc;i++) cout << p_my_vis_float[i] << endl;
 
 		// string new_dir;
@@ -1494,7 +1703,154 @@ void DS::caller_output_vtk_rectilinear (double * p_in, double * p_out, cudaStrea
 		// new_dir+=to_string(i_cycle);
 
 		// boost::filesystem::create_directory(new_dir.c_str());
-		write_vtr(p_my_vis_double,0,i_cycle);
-		delete [] p_my_vis_double;
+		write_vtr(p_my_vis_float,0,i_cycle);
+		delete [] p_my_vis_float;
 	}
 }
+
+
+/*
+	// du0dx, du0dy, du0dz
+	dns_dfdx <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u0_l, (double*) d_u0_r, (double*) d_u0_ll, (double*) d_u0_rr, (double*) d_du0dx, sy_bc_ll, sy_bc_l, sy_bc_r, sy_bc_rr);
+	dns_dfdy <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u0_c, (double*) d_du0dy);
+	dns_dfdz <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u0_c, (double*) d_du0dz);
+
+	// du1dx, du1dy, du1dz
+	dns_dfdx <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u1_l, (double*) d_u1_r, (double*) d_u1_ll, (double*) d_u1_rr, (double*) d_du1dx);
+	dns_dfdy <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u1_c, (double*) d_du1dy);
+	dns_dfdz <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u1_c, (double*) d_du1dz);
+
+	// du2dx, du2dy, du2dz
+	dns_dfdx <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u2_l, (double*) d_u2_r, (double*) d_u2_ll, (double*) d_u2_rr, (double*) d_du2dx);
+	dns_dfdy <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u2_c, (double*) d_du2dy);
+	dns_dfdz <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u2_c, (double*) d_du2dz);
+
+	// drhodx, drhody, drhodz
+	dns_dfdx <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_l[offset_rho], &p_r[offset_rho], &p_ll[offset_rho], &p_rr[offset_rho], (double*) d_drhodx);
+	dns_dfdy <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rho], (double*) d_drhody);
+	dns_dfdz <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rho], (double*) d_drhodz);
+
+	// drhou0dx, drhou0dy, drhou0dz
+	dns_dfdx <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_l[offset_rhou0], &p_r[offset_rhou0], &p_ll[offset_rhou0], &p_rr[offset_rhou0], (double*) d_drhou0dx, sy_bc_ll, sy_bc_l, sy_bc_r, sy_bc_rr);
+	dns_dfdy <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou0], (double*) d_drhou0dy);
+	dns_dfdz <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou0], (double*) d_drhou0dz);
+
+	// drhou1dx, drhou1dy, drhou1dz
+	dns_dfdx <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_l[offset_rhou1], &p_r[offset_rhou1], &p_ll[offset_rhou1], &p_rr[offset_rhou1], (double*) d_drhou1dx);
+	dns_dfdy <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou1], (double*) d_drhou1dy);
+	dns_dfdz <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou1], (double*) d_drhou1dz);
+
+	// drhou2dx, drhou2dy, drhou2dz
+	dns_dfdx <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_l[offset_rhou2], &p_r[offset_rhou2], &p_ll[offset_rhou2], &p_rr[offset_rhou2], (double*) d_drhou2dx);
+	dns_dfdy <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou2], (double*) d_drhou2dy);
+	dns_dfdz <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou2], (double*) d_drhou2dz);
+
+	// dpdx, dpdy, dpdz
+	dns_dfdx <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_p_l, (double*) d_p_r, (double*) d_p_ll, (double*) d_p_rr, (double*) d_dpdx);
+	dns_dfdy <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_p_c, (double*) d_dpdy);
+	dns_dfdz <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_p_c, (double*) d_dpdz);
+
+	// drhou0u0dx, drhou0u1dy, drhou0u2dz
+	dns_dfgdx <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_l[offset_rhou0], &p_r[offset_rhou0], &p_ll[offset_rhou0], &p_rr[offset_rhou0],
+																												(double*) d_u0_l, (double*) d_u0_r, (double*) d_u0_ll, (double*) d_u0_rr, (double*) d_drhou0u0dx, sy_bc_ll, sy_bc_l, sy_bc_r, sy_bc_rr, sy_bc_ll, sy_bc_l, sy_bc_r, sy_bc_rr);
+	dns_dfgdy <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou0], (double*) d_u1_c, (double*) d_drhou0u1dy);
+	dns_dfgdz <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou0], (double*) d_u2_c, (double*) d_drhou0u2dz);
+
+	// drhou1u0dx, drhou1u1dy, drhou1u2dz
+	dns_dfgdx <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_l[offset_rhou1], &p_r[offset_rhou1], &p_ll[offset_rhou1], &p_rr[offset_rhou1],
+																												(double*) d_u0_l, (double*) d_u0_r, (double*) d_u0_ll, (double*) d_u0_rr, (double*) d_drhou1u0dx, 1, 1, 1, 1, sy_bc_ll, sy_bc_l, sy_bc_r, sy_bc_rr);
+	dns_dfgdy <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou1], (double*) d_u1_c, (double*) d_drhou1u1dy);
+	dns_dfgdz <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou1], (double*) d_u2_c, (double*) d_drhou1u2dz);
+
+	// drhou2u0dx, drhou2u1dy, drhou2u2dz
+	dns_dfgdx <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_l[offset_rhou2], &p_r[offset_rhou2], &p_ll[offset_rhou2], &p_rr[offset_rhou2],
+																												(double*) d_u0_l, (double*) d_u0_r, (double*) d_u0_ll, (double*) d_u0_rr, (double*) d_drhou2u0dx, 1, 1, 1, 1, sy_bc_ll, sy_bc_l, sy_bc_r, sy_bc_rr);
+	dns_dfgdy <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou2], (double*) d_u1_c, (double*) d_drhou2u1dy);
+	dns_dfgdz <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou2], (double*) d_u2_c, (double*) d_drhou2u2dz);
+
+	// du0d2x, du0d2y, du0d2z
+	dns_dfd2x <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u0_c, (double*) d_u0_l, (double*) d_u0_r, (double*) d_u0_ll, (double*) d_u0_rr, (double*) d_du0d2x, sy_bc_ll, sy_bc_l, sy_bc_r, sy_bc_rr);
+	dns_dfd2y <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u0_c, (double*) d_du0d2y);
+	dns_dfd2z <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u0_c, (double*) d_du0d2z);
+						
+	// du0dxdy, du0dxdz
+	dns_dfdy <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_du0dx, (double*) d_du0dxdy);
+	dns_dfdz <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_du0dx, (double*) d_du0dxdz);
+
+	// du1dxdy, du1dydz
+	dns_dfdy <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_du1dx, (double*) d_du1dxdy);
+	dns_dfdz <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_du1dy, (double*) d_du1dydz);
+
+	// du2dxdz, du2dydz
+	dns_dfdy <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_du2dx, (double*) d_du2dxdz);
+	dns_dfdz <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_du2dy, (double*) d_du2dydz);
+
+	// dpu0dx, dpu1dy, dpu2dz
+	dns_dfgdx <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_p_l, (double*) d_p_r, (double*) d_p_ll, (double*) d_p_rr,
+																												(double*) d_u0_l, (double*) d_u0_r, (double*) d_u0_ll, (double*) d_u0_rr, (double*) d_dpu0dx, 1, 1, 1, 1, sy_bc_ll, sy_bc_l, sy_bc_r, sy_bc_rr);
+	dns_dfgdy <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_p_c, (double*) d_u1_c, (double*) d_dpu1dy);
+	dns_dfgdz <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_p_c, (double*) d_u2_c, (double*) d_dpu2dz);
+
+	// dTd2x, dTd2y, dTd2z
+	dns_dfd2x <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_T_c, (double*) d_T_l, (double*) d_T_r, (double*) d_T_ll, (double*) d_T_rr, (double*) d_dTd2x);
+	dns_dfd2y <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_T_c, (double*) d_dTd2y);
+	dns_dfd2z <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_T_c, (double*) d_dTd2z);
+	
+	dns_Res <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0,
+						(double*) &p_c[offset_rho],
+						(double*) d_u0_c, (double*) d_u1_c, (double*) d_u2_c,
+						&p_c[offset_rhou0], &p_c[offset_rhou1], &p_c[offset_rhou2], &p_c[offset_rhoE],
+						(double*) d_p_c, (double*) d_T_c,
+						(double*) d_du0dx, (double*) d_du0dy, (double*) d_du0dz,
+						(double*) d_du1dx, (double*) d_du1dy, (double*) d_du1dz,
+						(double*) d_du2dx, (double*) d_du2dy, (double*) d_du2dz,
+						(double*) d_drhodx, (double*) d_drhody, (double*) d_drhodz,
+						(double*) d_drhou0dx, (double*) d_drhou0dy, (double*) d_drhou0dz,
+						(double*) d_drhou1dx, (double*) d_drhou1dy, (double*) d_drhou1dz,
+						(double*) d_drhou2dx, (double*) d_drhou2dy, (double*) d_drhou2dz,
+						(double*) d_dpdx, (double*) d_dpdy, (double*) d_dpdz,
+						(double*) d_dpu0dx, (double*) d_dpu1dy, (double*) d_dpu2dz,
+						(double*) d_drhou0u0dx, (double*) d_drhou0u1dy, (double*) d_drhou0u2dz,
+						(double*) d_drhou1u0dx, (double*) d_drhou1u1dy, (double*) d_drhou1u2dz,
+						(double*) d_drhou2u0dx, (double*) d_drhou2u1dy, (double*) d_drhou2u2dz,
+						(double*) d_du0d2x, (double*) d_du0d2y, (double*) d_du0d2z,
+						(double*) d_du1d2x, (double*) d_du1d2y, (double*) d_du1d2z,
+						(double*) d_du2d2x, (double*) d_du2d2y, (double*) d_du2d2z,
+						(double*) d_du0dxdy, (double*) d_du0dxdz,
+ 						(double*) d_du1dxdy, (double*) d_du1dydz,
+ 						(double*) d_du2dxdz, (double*) d_du2dydz,
+						(double*) d_dTd2x, (double*) d_dTd2y, (double*) d_dTd2z,
+						(double*) d_drhoEdx, (double*) d_drhoEdy, (double*) d_drhoEdz,
+						(double*) d_drhoEu0dx, (double*) d_drhoEu1dy, (double*) d_drhoEu2dz,
+						(double*) d_Res_rho,
+						(double*) d_Res_rhou0,
+						(double*) d_Res_rhou1,
+						(double*) d_Res_rhou2,
+						(double*) d_Res_rhoE);
+
+	dns_RKsubStage <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0,
+					&p_c_out[offset_rho], 
+					&p_c_out[offset_rhou0], &p_c_out[offset_rhou1], &p_c_out[offset_rhou2],
+					&p_c_out[offset_rhoE],
+					&p_c[offset_rho_old],
+					&p_c[offset_rhou0_old], &p_c[offset_rhou1_old], &p_c[offset_rhou2_old],
+					&p_c[offset_rhoE_old],
+					(double*) d_Res_rho,
+					(double*) d_Res_rhou0, (double*) d_Res_rhou1, (double*) d_Res_rhou2, 
+					(double*) d_Res_rhoE,
+					rknew);
+	
+	dns_RKtmpAdvance <<<blockSize,threads_per_block,0,*stream>>>(0, 0, 0,
+					&p_c_out[offset_rho_old],
+					&p_c_out[offset_rhou0_old], &p_c_out[offset_rhou1_old], &p_c_out[offset_rhou2_old],
+					&p_c_out[offset_rhoE_old],
+					&p_c[offset_rho_old],
+					&p_c[offset_rhou0_old], &p_c[offset_rhou1_old], &p_c[offset_rhou2_old],
+					&p_c[offset_rhoE_old],
+					(double*) d_Res_rho,
+					(double*) d_Res_rhou0, (double*) d_Res_rhou1, (double*) d_Res_rhou2, 
+					(double*) d_Res_rhoE,
+					rkold);
+
+
+*/

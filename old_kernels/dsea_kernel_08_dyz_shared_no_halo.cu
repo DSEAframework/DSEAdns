@@ -92,22 +92,28 @@ __device__ int32_t thread_to_global_idx(int32_t problemsize, int32_t thread_idx,
 
 }
 
+__device__ double dns_pDer1(double v_ll, double v_l, double v_r, double v_rr, double DK) {
+	return 1./DK * (1./12. * v_ll - 2./3. * v_l + 2./3. * v_r - 1./12. * v_rr);
+}
+
+__device__ double dns_pDer2(double v_ll, double v_l, double v_c, double v_r, double v_rr, double DK) {
+	return 1./(DK*DK) * (-1./12. * v_ll + 4./3. * v_l - 5./2. * v_c + 4./3. * v_r - 1./12. * v_rr);
+}
+
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // First Partial Derivatives
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 __global__ void dns_dfdx(int32_t i_worker, int32_t order_in, int32_t order_out,
-						/*order 1*/ double * __restrict__ f_l, double * __restrict__ f_r,
-						/*order 2*/ double * __restrict__ f_ll, double * __restrict__ f_rr,
-						/*order 0*/ double * __restrict__ dfdx, int sy_bc_ll = 1, int sy_bc_l = 1, int sy_bc_r = 1, int sy_bc_rr = 1) {
+	/*order 1*/ double * __restrict__ f_l, double * __restrict__ f_r,
+	/*order 2*/ double * __restrict__ f_ll, double * __restrict__ f_rr,
+	/*order 0*/ double * __restrict__ dfdx, int sy_bc_ll = 1, int sy_bc_l = 1, int sy_bc_r = 1, int sy_bc_rr = 1) {
 
-	// Calculate position in part
-	//int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
 
 	int32_t col_in_block, row_in_block;
-
+	int32_t idx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
 
 	if (idx<block_ncc) {
 		dfdx[idx] = 1/DX * (1./12. * sy_bc_ll *  f_ll[idx] - 2./3. * sy_bc_l * f_l[idx] + 2./3. * sy_bc_r * f_r[idx] - 1./12. * sy_bc_rr * f_rr[idx]); 
@@ -117,40 +123,149 @@ __global__ void dns_dfdx(int32_t i_worker, int32_t order_in, int32_t order_out,
 }
 
 __global__ void dns_dfgdx(int32_t i_worker, int32_t order_in, int32_t order_out,
-						/*order 1*/ double * __restrict__ f_l, double * __restrict__ f_r,
-						/*order 2*/ double * __restrict__ f_ll, double * __restrict__ f_rr,
-						/*order 1*/ double * __restrict__ g_l, double * __restrict__ g_r,
-						/*order 2*/ double * __restrict__ g_ll, double * __restrict__ g_rr,
-						/*order 0*/ double * __restrict__ dfgdx, 
-						int sy_bc_f_ll = 1, int sy_bc_f_l = 1, int sy_bc_f_r = 1, int sy_bc_f_rr = 1,
-						int sy_bc_g_ll = 1, int sy_bc_g_l = 1, int sy_bc_g_r = 1, int sy_bc_g_rr = 1) {
+	/*order 1*/ double * __restrict__ f_l, double * __restrict__ f_r,
+	/*order 2*/ double * __restrict__ f_ll, double * __restrict__ f_rr,
+	/*order 1*/ double * __restrict__ g_l, double * __restrict__ g_r,
+	/*order 2*/ double * __restrict__ g_ll, double * __restrict__ g_rr,
+	/*order 0*/ double * __restrict__ dfgdx, 
+	int sy_bc_f_ll = 1, int sy_bc_f_l = 1, int sy_bc_f_r = 1, int sy_bc_f_rr = 1,
+	int sy_bc_g_ll = 1, int sy_bc_g_l = 1, int sy_bc_g_r = 1, int sy_bc_g_rr = 1) {
 
-	// Calculate position in part
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
+
+	int32_t col_in_block, row_in_block;
+	int32_t idx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
 
 	if (idx<block_ncc) {
 		dfgdx[idx] = 1/DX * (1./12. * (sy_bc_f_ll * f_ll[idx] * sy_bc_g_ll * g_ll[idx]) - 2./3. * (sy_bc_f_l * f_l[idx] * sy_bc_g_l * g_l[idx]) 
-											 + 2./3. * (sy_bc_f_r * f_r[idx] * sy_bc_g_r * g_r[idx]) - 1./12. * (sy_bc_f_rr * f_rr[idx] * sy_bc_g_rr * g_rr[idx])); 
+							+ 2./3. * (sy_bc_f_r * f_r[idx] * sy_bc_g_r * g_r[idx]) - 1./12. * (sy_bc_f_rr * f_rr[idx] * sy_bc_g_rr * g_rr[idx])); 
 	}
 
 }
 
-__global__ void dns_dfdy(int32_t i_worker, int32_t order_in, int32_t order_out,
-						/*order 0*/ double * __restrict__ f,
-						/*order 0*/ double * __restrict__ dfdy) {
+__global__ void dns_dfdyz(int32_t i_worker, int32_t order_in, int32_t order_out,
+	/*order 0*/ double * __restrict__ f,
+	/*order 0*/ double * __restrict__ dfdy, 
+	/*order 0*/ double * __restrict__ dfdz) {
 
-	// Calculate position in part
-	//int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
-
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
+	__shared__ double s_d[BLOCKSIZE_Y+4][BLOCKSIZE_Z+4]; // 4-wide halo
+	
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
 
 	int32_t col_in_block, row_in_block;
+	int32_t gidx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
+
+	if (gidx<block_ncc) {
+		row_in_block+=2;
+		col_in_block+=2;
+
+		s_d[row_in_block][col_in_block] = f[gidx];
+
+		int32_t Y, Z;
+		int32_t dy_ll, dy_rr, dz_ll, dz_rr;
+
+		COORDS(gidx, Y, Z, NZ);
+
+		// get halos
+		if (row_in_block < 4) {
+			IDX((NY+Y-2)%NY, Z, dy_ll, NZ);
+			s_d[row_in_block-2][col_in_block] = f[dy_ll];
+		}
+		if (row_in_block >= BLOCKSIZE_Y) {
+			IDX((NY+Y+2)%NY, Z, dy_rr, NZ);
+			s_d[row_in_block+2][col_in_block] = f[dy_rr];
+		}
+
+		// get halos
+		if (col_in_block < 4) {
+			IDX(Y, (NZ+Z-2)%NZ, dz_ll, NZ);
+			s_d[row_in_block][col_in_block-2] = f[dz_ll];
+		}
+		if (col_in_block >= BLOCKSIZE_Z) {
+			IDX(Y, (NZ+Z+2)%NZ, dz_rr, NZ);
+			s_d[row_in_block][col_in_block+2] = f[dz_rr];
+		}
+
+		__syncthreads();
+
+		dfdy[gidx] = 1/DY * (1./12. * s_d[row_in_block-2][col_in_block] - 2./3. * s_d[row_in_block-1][col_in_block] 
+			+ 2./3. * s_d[row_in_block+1][col_in_block]  - 1./12. * s_d[row_in_block+2][col_in_block]); 
+
+		dfdz[gidx] = 1/DZ * (1./12. * s_d[row_in_block][col_in_block-2] - 2./3. * s_d[row_in_block][col_in_block-1] 
+			+ 2./3. * s_d[row_in_block][col_in_block+1] - 1./12. * s_d[row_in_block][col_in_block+2]); 
+	}
+}
+
+__global__ void dns_dfgdyz(int32_t i_worker, int32_t order_in, int32_t order_out,
+	/*order 1*/ double * __restrict__ f,
+	/*order 1*/ double * __restrict__ g,
+	/*order 0*/ double * __restrict__ dfgdy,
+	/*order 0*/ double * __restrict__ dfgdz) {
+
+	__shared__ double s_d[BLOCKSIZE_Y+4][BLOCKSIZE_Z+4]; // 4-wide halo
+
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
+
+	int32_t col_in_block, row_in_block;
+	int32_t gidx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
+	
+	if (gidx<block_ncc) {
+		row_in_block+=2;
+		col_in_block+=2;
+
+		s_d[row_in_block][col_in_block] = f[gidx] * g[gidx];
+
+		int32_t Y, Z;
+		int32_t dy_ll, dy_rr, dz_ll, dz_rr;
+		COORDS(gidx, Y, Z, NZ);
+
+		// get halos
+		if (row_in_block < 4) {
+			IDX((NY+Y-2)%NY, Z, dy_ll, NZ);
+			s_d[row_in_block-2][col_in_block] = f[dy_ll] * g[dy_ll];
+		}
+		if (row_in_block >= BLOCKSIZE_Y) {
+			IDX((NY+Y+2)%NY, Z, dy_rr, NZ);
+			s_d[row_in_block+2][col_in_block] = f[dy_rr] * g[dy_rr];
+		}
+
+		// get halos
+		if (col_in_block < 4) {
+			IDX(Y, (NZ+Z-2)%NZ, dz_ll, NZ);
+			s_d[row_in_block][col_in_block-2] = f[dz_ll] * g[dz_ll];
+		}
+		if (col_in_block >= BLOCKSIZE_Z) {
+			IDX(Y, (NZ+Z+2)%NZ, dz_rr, NZ);
+			s_d[row_in_block][col_in_block+2] = f[dz_rr] * g[dz_rr];
+		}
+
+		__syncthreads();
+
+		dfgdy[gidx] = 1/DY * (1./12. * s_d[row_in_block-2][col_in_block] - 2./3. * s_d[row_in_block-1][col_in_block] 
+			+ 2./3. * s_d[row_in_block+1][col_in_block]  - 1./12. * s_d[row_in_block+2][col_in_block]); 
+		
+		dfgdz[gidx] = 1/DZ * (1./12. * s_d[row_in_block][col_in_block-2] - 2./3. * s_d[row_in_block][col_in_block-1]
+			+ 2./3. * s_d[row_in_block][col_in_block+1] - 1./12. * s_d[row_in_block][col_in_block+2]); 
+
+
+	}
+}
+
+
+__global__ void dns_dfdy(int32_t i_worker, int32_t order_in, int32_t order_out,
+	/*order 0*/ double * __restrict__ f,
+	/*order 0*/ double * __restrict__ dfdy) {
+
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
+
+	int32_t col_in_block, row_in_block;
+	int32_t idx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
 
 	if (idx<block_ncc) {
 		int32_t Y, Z;
 		int32_t idx_ll, idx_l, idx_r, idx_rr;
 		COORDS(idx, Y, Z, NZ);
-		
+
 		// Calculate idx with periodic boundary condition
 		IDX((NY+Y-2)%NY, Z, idx_ll, NZ);
 		IDX((NY+Y-1)%NY, Z, idx_l, NZ);
@@ -164,18 +279,20 @@ __global__ void dns_dfdy(int32_t i_worker, int32_t order_in, int32_t order_out,
 }
 
 __global__ void dns_dfgdy(int32_t i_worker, int32_t order_in, int32_t order_out,
-						/*order 1*/ double * __restrict__ f,
-						/*order 1*/ double * __restrict__ g,
-						/*order 0*/ double * __restrict__ dfgdy) {
+	/*order 1*/ double * __restrict__ f,
+	/*order 1*/ double * __restrict__ g,
+	/*order 0*/ double * __restrict__ dfgdy) {
 
-	// Calculate position in part
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
 
+	int32_t col_in_block, row_in_block;
+	int32_t idx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
+	
 	if (idx<block_ncc) {
 		int32_t Y, Z;
 		int32_t idx_ll, idx_l, idx_r, idx_rr;
 		COORDS(idx, Y, Z, NZ);
-		
+
 		// Calculate idx with periodic boundary condition
 		IDX((NY+Y-2)%NY, Z, idx_ll, NZ);
 		IDX((NY+Y-1)%NY, Z, idx_l, NZ);
@@ -183,26 +300,25 @@ __global__ void dns_dfgdy(int32_t i_worker, int32_t order_in, int32_t order_out,
 		IDX((NY+Y+2)%NY, Z, idx_rr, NZ);
 
 		dfgdy[idx] = 1/DY * (1./12. * (f[idx_ll] * g[idx_ll]) - 2./3. * (f[idx_l] * g[idx_l]) 
-											+ 2./3. * (f[idx_r] * g[idx_r]) - 1./12. * (f[idx_rr] * g[idx_rr])); 
+								+ 2./3. * (f[idx_r] * g[idx_r]) - 1./12. * (f[idx_rr] * g[idx_rr])); 
 	}
 }
 
 __global__ void dns_dfdz(int32_t i_worker, int32_t order_in, int32_t order_out,
-						/*order 1*/ double * __restrict__ f,
-						/*order 0*/ double * __restrict__ dfdz) {
+	/*order 1*/ double * __restrict__ f,
+	/*order 0*/ double * __restrict__ dfdz) {
 
-	// Calculate position in part
-	//int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
-
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
 
 	int32_t col_in_block, row_in_block;
+	int32_t idx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
+
 
 	if (idx<block_ncc) {
 		int32_t Y, Z;
 		int32_t idx_ll, idx_l, idx_r, idx_rr;
 		COORDS(idx, Y, Z, NZ);
-		
+
 		// Calculate idx with periodic boundary condition
 		IDX(Y, (NZ+Z-2)%NZ, idx_ll, NZ);
 		IDX(Y, (NZ+Z-1)%NZ, idx_l, NZ);
@@ -217,18 +333,21 @@ __global__ void dns_dfdz(int32_t i_worker, int32_t order_in, int32_t order_out,
 }
 
 __global__ void dns_dfgdz(int32_t i_worker, int32_t order_in, int32_t order_out,
-						/*order 1*/ double * __restrict__ f,
-						/*order 1*/ double * __restrict__ g,
-						/*order 0*/ double * __restrict__ dfgdz) {
+	/*order 1*/ double * __restrict__ f,
+	/*order 1*/ double * __restrict__ g,
+	/*order 0*/ double * __restrict__ dfgdz) {
 
-	// Calculate position in part
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
+
+	int32_t col_in_block, row_in_block;
+	int32_t idx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
+
 
 	if (idx<block_ncc) {
 		int32_t Y, Z;
 		int32_t idx_ll, idx_l, idx_r, idx_rr;
 		COORDS(idx, Y, Z, NZ);
-		
+
 		// Calculate idx with periodic boundary condition
 		IDX(Y, (NZ+Z-2)%NZ, idx_ll, NZ);
 		IDX(Y, (NZ+Z-1)%NZ, idx_l, NZ);
@@ -236,7 +355,7 @@ __global__ void dns_dfgdz(int32_t i_worker, int32_t order_in, int32_t order_out,
 		IDX(Y, (NZ+Z+2)%NZ, idx_rr, NZ);
 
 		dfgdz[idx] = 1/DZ * (1./12. * (f[idx_ll] * g[idx_ll]) - 2./3. * (f[idx_l] * g[idx_l]) 
-											+ 2./3. * (f[idx_r] * g[idx_r]) - 1./12. * (f[idx_rr] * g[idx_rr])); 
+							+ 2./3. * (f[idx_r] * g[idx_r]) - 1./12. * (f[idx_rr] * g[idx_rr])); 
 	}
 
 }
@@ -246,13 +365,15 @@ __global__ void dns_dfgdz(int32_t i_worker, int32_t order_in, int32_t order_out,
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 __global__ void dns_dfd2x(int32_t i_worker, int32_t order_in, int32_t order_out,
-						/*order 0*/ double * __restrict__ f_c,
-						/*order 1*/ double * __restrict__ f_l, double * __restrict__ f_r,
-						/*order 2*/ double * __restrict__ f_ll, double * __restrict__ f_rr,
-						/*order 0*/ double * __restrict__ dfd2x, int sy_bc_ll = 1, int sy_bc_l = 1, int sy_bc_r = 1, int sy_bc_rr = 1) {
+	/*order 0*/ double * __restrict__ f_c,
+	/*order 1*/ double * __restrict__ f_l, double * __restrict__ f_r,
+	/*order 2*/ double * __restrict__ f_ll, double * __restrict__ f_rr,
+	/*order 0*/ double * __restrict__ dfd2x, int sy_bc_ll = 1, int sy_bc_l = 1, int sy_bc_r = 1, int sy_bc_rr = 1) {
 
-	// Calculate position in part
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
+
+	int32_t col_in_block, row_in_block;
+	int32_t idx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
 
 	if (idx<block_ncc) {
 		dfd2x[idx] = 1/(DX*DX) * (-1./12. * sy_bc_ll * f_ll[idx] + 4./3. * sy_bc_l * f_l[idx] - 5./2. * f_c[idx] + 4./3. * sy_bc_r * f_r[idx] - 1./12. * sy_bc_rr * f_rr[idx]); 
@@ -260,18 +381,73 @@ __global__ void dns_dfd2x(int32_t i_worker, int32_t order_in, int32_t order_out,
 
 }
 
+__global__ void dns_dfd2yz(int32_t i_worker, int32_t order_in, int32_t order_out,
+	/*order 1*/ double * __restrict__ f,
+	/*order 0*/ double * __restrict__ dfd2y,
+	/*order 0*/ double * __restrict__ dfd2z) {
+
+	__shared__ double s_d[BLOCKSIZE_Y][BLOCKSIZE_Z]; // 4-wide halo
+
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
+
+	int32_t col_in_block, row_in_block;
+	int32_t gidx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
+	
+	if (gidx<block_ncc) {
+
+		s_d[row_in_block][col_in_block] = f[gidx];
+
+		__syncthreads();
+
+
+		int32_t Y, Z;
+		int32_t dy_ll, dy_rr, dz_ll, dz_rr;
+		COORDS(gidx, Y, Z, NZ);
+
+		IDX((NY+Y-2)%NY, Z, dy_ll, NZ);
+		IDX((NY+Y-1)%NY, Z, dy_l, NZ);
+		IDX((NY+Y+1)%NY, Z, dy_r, NZ);
+		IDX((NY+Y+2)%NY, Z, dy_rr, NZ);
+
+		IDX(Y, (NZ+Z-2)%NZ, dz_ll, NZ);
+		IDX(Y, (NZ+Z-1)%NZ, dz_l, NZ);
+		IDX(Y, (NZ+Z+1)%NZ, dz_r, NZ);
+		IDX(Y, (NZ+Z+2)%NZ, dz_rr, NZ);
+
+		// get possible halos
+		f_dy_ll = (row_in_block < 2) ? f[dy_ll] : s_d[row_in_block-2][col_in_block];
+		f_dy_l = (row_in_block < 1) ? f[dy_l] : s_d[row_in_block-1][col_in_block];
+		f_dy_r = (row_in_block >= BLOCKSIZE_Y-1) ? f[dy_r] : s_d[row_in_block+1][col_in_block];
+		f_dy_rr = (row_in_block >= BLOCKSIZE_Y-2) ? f[dy_rr] : s_d[row_in_block+2][col_in_block];
+
+		// get possible halos
+		f_dz_ll = (col_in_block < 2) ? f[dz_ll] : s_d[row_in_block][col_in_block-2];
+		f_dz_l = (col_in_block < 1) ? f[dz_l] : s_d[row_in_block][col_in_block-1];
+		f_dz_r = (col_in_block >= BLOCKSIZE_Z-1) ? f[dz_r] : s_d[row_in_block][col_in_block+1];
+		f_dz_rr = (col_in_block >= BLOCKSIZE_Z-2) ? f[dz_rr] : s_d[row_in_block][col_in_block+2];
+
+		dfd2y[gidx] = 1/(DY*DY) * (-1./12. * f_dy_ll + 4./3. * f_dy_l - 5./2. * s_d[row_in_block][col_in_block] + 4./3. * f_dy_r - 1./12. * f_dy_rr); 
+
+				
+		dfd2z[gidx] = 1/(DZ*DZ) * (-1./12. * f_dz_ll + 4./3. * f_dz_l - 5./2. * s_d[row_in_block][col_in_block] + 4./3. * f_dz_r - 1./12. * f_dz_rr); 
+
+	}
+}
+
 __global__ void dns_dfd2y(int32_t i_worker, int32_t order_in, int32_t order_out,
-						/*order 1*/ double * __restrict__ f,
-						/*order 0*/ double * __restrict__ dfd2y) {
+	/*order 1*/ double * __restrict__ f,
+	/*order 0*/ double * __restrict__ dfd2y) {
 
-	// Calculate position in part
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
 
+	int32_t col_in_block, row_in_block;
+	int32_t idx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
+	
 	if (idx<block_ncc) {
 		int32_t Y, Z;
 		int32_t idx_ll, idx_l, idx_r, idx_rr;
 		COORDS(idx, Y, Z, NZ);
-		
+
 		// Calculate idx with periodic boundary condition
 		IDX((NY+Y-2)%NY, Z, idx_ll, NZ);
 		IDX((NY+Y-1)%NY, Z, idx_l, NZ);
@@ -281,21 +457,24 @@ __global__ void dns_dfd2y(int32_t i_worker, int32_t order_in, int32_t order_out,
 		//printf("dfd2y My Id: %d, my slice coordinates %d,%d, neighbors: %d/%d/%d/%d\n", idx, Y,Z, idx_ll, idx_l, idx_r, idx_rr);
 
 		dfd2y[idx] = 1/(DY*DY) * (-1./12. * f[idx_ll] + 4./3. * f[idx_l] - 5./2. * f[idx] + 4./3. * f[idx_r] - 1./12. * f[idx_rr]); 
+
 	}
 }
 
 __global__ void dns_dfd2z(int32_t i_worker, int32_t order_in, int32_t order_out,
-						/*order 0*/ double * __restrict__ f,
-						/*order 0*/ double * __restrict__ dfd2z) {
+	/*order 0*/ double * __restrict__ f,
+	/*order 0*/ double * __restrict__ dfd2z) {
 
-	// Calculate position in part
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
 
+	int32_t col_in_block, row_in_block;
+	int32_t idx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
+	
 	if (idx<block_ncc) {
 		int32_t Y, Z;
 		int32_t idx_ll, idx_l, idx_r, idx_rr;
 		COORDS(idx, Y, Z, NZ);
-		
+
 		// Calculate idx with periodic boundary condition
 		IDX(Y, (NZ+Z-2)%NZ, idx_ll, NZ);
 		IDX(Y, (NZ+Z-1)%NZ, idx_l, NZ);
@@ -310,105 +489,110 @@ __global__ void dns_dfd2z(int32_t i_worker, int32_t order_in, int32_t order_out,
 
 
 __global__ void dns_Res_v1(int32_t i_worker, int32_t order_in, int32_t order_out,
-						/*order 0*/ double * __restrict__ rho,
-						/*order 0*/ double * __restrict__ u0,
-						/*order 0*/ double * __restrict__ u1,
-						/*order 0*/ double * __restrict__ u2,
-						/*order 0*/ double * __restrict__ rhou0,
-						/*order 0*/ double * __restrict__ rhou1,
-						/*order 0*/ double * __restrict__ rhou2,
-						/*order 0*/ double * __restrict__ rhoE,
-						/*order 0*/ double * __restrict__ p,
-						/*order 0*/ double * __restrict__ T,
+	/*order 0*/ double * __restrict__ rho,
+	/*order 0*/ double * __restrict__ u0,
+	/*order 0*/ double * __restrict__ u1,
+	/*order 0*/ double * __restrict__ u2,
+	/*order 0*/ double * __restrict__ rhou0,
+	/*order 0*/ double * __restrict__ rhou1,
+	/*order 0*/ double * __restrict__ rhou2,
+	/*order 0*/ double * __restrict__ rhoE,
+	/*order 0*/ double * __restrict__ p,
+	/*order 0*/ double * __restrict__ T,
 
-						/*order 0*/ double * __restrict__ du0dx,
-						/*order 0*/ double * __restrict__ du0dy,
-						/*order 0*/ double * __restrict__ du0dz,
+	/*order 0*/ double * __restrict__ du0dx,
+	/*order 0*/ double * __restrict__ du0dy,
+	/*order 0*/ double * __restrict__ du0dz,
 
-						/*order 0*/ double * __restrict__ du1dx,
-						/*order 0*/ double * __restrict__ du1dy,
-						/*order 0*/ double * __restrict__ du1dz,
+	/*order 0*/ double * __restrict__ du1dx,
+	/*order 0*/ double * __restrict__ du1dy,
+	/*order 0*/ double * __restrict__ du1dz,
 
-						/*order 0*/ double * __restrict__ du2dx,
-						/*order 0*/ double * __restrict__ du2dy,
-						/*order 0*/ double * __restrict__ du2dz,
+	/*order 0*/ double * __restrict__ du2dx,
+	/*order 0*/ double * __restrict__ du2dy,
+	/*order 0*/ double * __restrict__ du2dz,
 
-						/*order 0*/ double * __restrict__ drhodx,
-						/*order 0*/ double * __restrict__ drhody,
-						/*order 0*/ double * __restrict__ drhodz,
+	/*order 0*/ double * __restrict__ drhodx,
+	/*order 0*/ double * __restrict__ drhody,
+	/*order 0*/ double * __restrict__ drhodz,
 
-						/*order 0*/ double * __restrict__ drhou0dx,
-						/*order 0*/ double * __restrict__ drhou0dy,
-						/*order 0*/ double * __restrict__ drhou0dz,
+	/*order 0*/ double * __restrict__ drhou0dx,
+	/*order 0*/ double * __restrict__ drhou0dy,
+	/*order 0*/ double * __restrict__ drhou0dz,
 
-						/*order 0*/ double * __restrict__ drhou1dx,
-						/*order 0*/ double * __restrict__ drhou1dy,
-						/*order 0*/ double * __restrict__ drhou1dz,
+	/*order 0*/ double * __restrict__ drhou1dx,
+	/*order 0*/ double * __restrict__ drhou1dy,
+	/*order 0*/ double * __restrict__ drhou1dz,
 
-						/*order 0*/ double * __restrict__ drhou2dx,
-						/*order 0*/ double * __restrict__ drhou2dy,
-						/*order 0*/ double * __restrict__ drhou2dz,
+	/*order 0*/ double * __restrict__ drhou2dx,
+	/*order 0*/ double * __restrict__ drhou2dy,
+	/*order 0*/ double * __restrict__ drhou2dz,
 
-						/*order 0*/ double * __restrict__ dpdx,
-						/*order 0*/ double * __restrict__ dpdy,
-						/*order 0*/ double * __restrict__ dpdz,
+	/*order 0*/ double * __restrict__ dpdx,
+	/*order 0*/ double * __restrict__ dpdy,
+	/*order 0*/ double * __restrict__ dpdz,
 
-						/*order 0*/ double * __restrict__ dpu0dx,
-						/*order 0*/ double * __restrict__ dpu1dy,
-						/*order 0*/ double * __restrict__ dpu2dz,
+	/*order 0*/ double * __restrict__ dpu0dx,
+	/*order 0*/ double * __restrict__ dpu1dy,
+	/*order 0*/ double * __restrict__ dpu2dz,
 
-						/*order 0*/ double * __restrict__ drhou0u0dx,
-						/*order 0*/ double * __restrict__ drhou0u1dy,
-						/*order 0*/ double * __restrict__ drhou0u2dz,
+	/*order 0*/ double * __restrict__ drhou0u0dx,
+	/*order 0*/ double * __restrict__ drhou0u1dy,
+	/*order 0*/ double * __restrict__ drhou0u2dz,
 
-						/*order 0*/ double * __restrict__ drhou1u0dx,
-						/*order 0*/ double * __restrict__ drhou1u1dy,
-						/*order 0*/ double * __restrict__ drhou1u2dz,
+	/*order 0*/ double * __restrict__ drhou1u0dx,
+	/*order 0*/ double * __restrict__ drhou1u1dy,
+	/*order 0*/ double * __restrict__ drhou1u2dz,
 
-						/*order 0*/ double * __restrict__ drhou2u0dx,
-						/*order 0*/ double * __restrict__ drhou2u1dy,
-						/*order 0*/ double * __restrict__ drhou2u2dz,
+	/*order 0*/ double * __restrict__ drhou2u0dx,
+	/*order 0*/ double * __restrict__ drhou2u1dy,
+	/*order 0*/ double * __restrict__ drhou2u2dz,
 
-						/*order 0*/ double * __restrict__ du0d2x,
-						/*order 0*/ double * __restrict__ du0d2y,
-						/*order 0*/ double * __restrict__ du0d2z,
+	/*order 0*/ double * __restrict__ du0d2x,
+	/*order 0*/ double * __restrict__ du0d2y,
+	/*order 0*/ double * __restrict__ du0d2z,
 
-						/*order 0*/ double * __restrict__ du1d2x,
-						/*order 0*/ double * __restrict__ du1d2y,
-						/*order 0*/ double * __restrict__ du1d2z,
+	/*order 0*/ double * __restrict__ du1d2x,
+	/*order 0*/ double * __restrict__ du1d2y,
+	/*order 0*/ double * __restrict__ du1d2z,
 
-						/*order 0*/ double * __restrict__ du2d2x,
-						/*order 0*/ double * __restrict__ du2d2y,
-						/*order 0*/ double * __restrict__ du2d2z,
+	/*order 0*/ double * __restrict__ du2d2x,
+	/*order 0*/ double * __restrict__ du2d2y,
+	/*order 0*/ double * __restrict__ du2d2z,
 
-						/*order 0*/ double * __restrict__ du0dxdy,
-						/*order 0*/ double * __restrict__ du0dxdz,
- 
-						/*order 0*/ double * __restrict__ du1dxdy,
-						/*order 0*/ double * __restrict__ du1dydz,
- 
-						/*order 0*/ double * __restrict__ du2dxdz,
-						/*order 0*/ double * __restrict__ du2dydz,
+	/*order 0*/ double * __restrict__ du0dxdy,
+	/*order 0*/ double * __restrict__ du0dxdz,
 
-						/*order 0*/ double * __restrict__ dTd2x,
-						/*order 0*/ double * __restrict__ dTd2y,
-						/*order 0*/ double * __restrict__ dTd2z,
+	/*order 0*/ double * __restrict__ du1dxdy,
+	/*order 0*/ double * __restrict__ du1dydz,
 
-						/*order 0*/ double * __restrict__ drhoEdx,
-						/*order 0*/ double * __restrict__ drhoEdy,
-						/*order 0*/ double * __restrict__ drhoEdz,
+	/*order 0*/ double * __restrict__ du2dxdz,
+	/*order 0*/ double * __restrict__ du2dydz,
 
-						/*order 0*/ double * __restrict__ drhoEu0dx,
-						/*order 0*/ double * __restrict__ drhoEu1dy,
-						/*order 0*/ double * __restrict__ drhoEu2dz,
-						
-						/*order 0*/ double * __restrict__ Res_rho,
-						/*order 0*/ double * __restrict__ Res_rhou0,
-						/*order 0*/ double * __restrict__ Res_rhou1,
-						/*order 0*/ double * __restrict__ Res_rhou2,
-						/*order 0*/ double * __restrict__ Res_rhoE) {
-	// Calculate position in part
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x ;
+	/*order 0*/ double * __restrict__ dTd2x,
+	/*order 0*/ double * __restrict__ dTd2y,
+	/*order 0*/ double * __restrict__ dTd2z,
+
+	/*order 0*/ double * __restrict__ drhoEdx,
+	/*order 0*/ double * __restrict__ drhoEdy,
+	/*order 0*/ double * __restrict__ drhoEdz,
+
+	/*order 0*/ double * __restrict__ drhoEu0dx,
+	/*order 0*/ double * __restrict__ drhoEu1dy,
+	/*order 0*/ double * __restrict__ drhoEu2dz,
+	
+	/*order 0*/ double * __restrict__ Res_rho,
+	/*order 0*/ double * __restrict__ Res_rhou0,
+	/*order 0*/ double * __restrict__ Res_rhou1,
+	/*order 0*/ double * __restrict__ Res_rhou2,
+	/*order 0*/ double * __restrict__ Res_rhoE) {
+
+
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
+
+	int32_t col_in_block, row_in_block;
+	int32_t idx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
+
 	if (idx<block_ncc) {
 
 		double lRes_rho = 0;
@@ -448,12 +632,12 @@ __global__ void dns_Res_v1(int32_t i_worker, int32_t order_in, int32_t order_out
 		lRes_rho +=   -0.5 * ldrhou0dx;
 
 		tmp0 = frac0 * (frac2 * du0d2x[idx] + du0d2y[idx] + du0d2z[idx]
-						+ frac3 * du1dxdy[idx]
-						+ frac3 * du2dxdz[idx]);
+			+ frac3 * du1dxdy[idx]
+			+ frac3 * du2dxdz[idx]);
 
 		lRes_rhou0 += tmp0;
 		lRes_rhoE += lu0 * tmp0;
-		
+
 
 
 		double lu1 = u1[idx];
@@ -467,8 +651,8 @@ __global__ void dns_Res_v1(int32_t i_worker, int32_t order_in, int32_t order_out
 		lRes_rho +=   -0.5 * ldrhou1dy;
 
 		tmp0 = frac0 * (frac2 * du1d2y[idx] + du1d2x[idx] + du1d2z[idx]
-						+ frac3 * du0dxdy[idx]
-						+ frac3 * du2dydz[idx]);
+			+ frac3 * du0dxdy[idx]
+			+ frac3 * du2dydz[idx]);
 
 		lRes_rhou1 += tmp0;
 		lRes_rhoE += lu1 * tmp0;
@@ -488,8 +672,8 @@ __global__ void dns_Res_v1(int32_t i_worker, int32_t order_in, int32_t order_out
 		Res_rho[idx] = lRes_rho;
 
 		tmp0 = frac0 * (frac2 * du2d2z[idx] + du2d2x[idx] + du2d2y[idx]
-						+ frac3 * du0dxdz[idx]
-						+ frac3 * du1dydz[idx]);
+			+ frac3 * du0dxdz[idx]
+			+ frac3 * du1dydz[idx]);
 
 		lRes_rhou2 += tmp0;
 		lRes_rhoE += lu2 * tmp0;
@@ -518,14 +702,14 @@ __global__ void dns_Res_v1(int32_t i_worker, int32_t order_in, int32_t order_out
 
 
 		lRes_rhoE += 1./RE *	(du0dy[idx] + du1dx[idx]) * du0dy[idx]
-								 + 1./RE *	(du0dy[idx] + du1dx[idx]) * du1dx[idx];
+					+ 1./RE *	(du0dy[idx] + du1dx[idx]) * du1dx[idx];
 
 		lRes_rhoE += 1./RE *	(du0dz[idx] + du2dx[idx]) * du0dz[idx]
-								 + 1./RE *	(du0dz[idx] + du2dx[idx]) * du2dx[idx];
+					+ 1./RE *	(du0dz[idx] + du2dx[idx]) * du2dx[idx];
 
 		lRes_rhoE += 1./RE *	(du1dz[idx] + du2dy[idx]) * du1dz[idx]
-								 + 1./RE *	(du1dz[idx] + du2dy[idx]) * du2dy[idx];
-		
+					+ 1./RE *	(du1dz[idx] + du2dy[idx]) * du2dy[idx];
+
 		lRes_rhoE += (dTd2x[idx] + dTd2y[idx] + dTd2z[idx]) / (MINF * MINF * PR * RE * (GAMA - 1));
 
 		Res_rhoE[idx] = lRes_rhoE;
@@ -537,173 +721,177 @@ __global__ void dns_Res_v1(int32_t i_worker, int32_t order_in, int32_t order_out
 }
 
 __global__ void dns_Res(int32_t i_worker, int32_t order_in, int32_t order_out,
-						/*order 0*/ double * __restrict__ rho,
-						/*order 0*/ double * __restrict__ u0,
-						/*order 0*/ double * __restrict__ u1,
-						/*order 0*/ double * __restrict__ u2,
-						/*order 0*/ double * __restrict__ rhou0,
-						/*order 0*/ double * __restrict__ rhou1,
-						/*order 0*/ double * __restrict__ rhou2,
-						/*order 0*/ double * __restrict__ rhoE,
-						/*order 0*/ double * __restrict__ p,
-						/*order 0*/ double * __restrict__ T,
+	/*order 0*/ double * __restrict__ rho,
+	/*order 0*/ double * __restrict__ u0,
+	/*order 0*/ double * __restrict__ u1,
+	/*order 0*/ double * __restrict__ u2,
+	/*order 0*/ double * __restrict__ rhou0,
+	/*order 0*/ double * __restrict__ rhou1,
+	/*order 0*/ double * __restrict__ rhou2,
+	/*order 0*/ double * __restrict__ rhoE,
+	/*order 0*/ double * __restrict__ p,
+	/*order 0*/ double * __restrict__ T,
 
-						/*order 0*/ double * __restrict__ du0dx,
-						/*order 0*/ double * __restrict__ du0dy,
-						/*order 0*/ double * __restrict__ du0dz,
+	/*order 0*/ double * __restrict__ du0dx,
+	/*order 0*/ double * __restrict__ du0dy,
+	/*order 0*/ double * __restrict__ du0dz,
 
-						/*order 0*/ double * __restrict__ du1dx,
-						/*order 0*/ double * __restrict__ du1dy,
-						/*order 0*/ double * __restrict__ du1dz,
+	/*order 0*/ double * __restrict__ du1dx,
+	/*order 0*/ double * __restrict__ du1dy,
+	/*order 0*/ double * __restrict__ du1dz,
 
-						/*order 0*/ double * __restrict__ du2dx,
-						/*order 0*/ double * __restrict__ du2dy,
-						/*order 0*/ double * __restrict__ du2dz,
+	/*order 0*/ double * __restrict__ du2dx,
+	/*order 0*/ double * __restrict__ du2dy,
+	/*order 0*/ double * __restrict__ du2dz,
 
-						/*order 0*/ double * __restrict__ drhodx,
-						/*order 0*/ double * __restrict__ drhody,
-						/*order 0*/ double * __restrict__ drhodz,
+	/*order 0*/ double * __restrict__ drhodx,
+	/*order 0*/ double * __restrict__ drhody,
+	/*order 0*/ double * __restrict__ drhodz,
 
-						/*order 0*/ double * __restrict__ drhou0dx,
-						/*order 0*/ double * __restrict__ drhou0dy,
-						/*order 0*/ double * __restrict__ drhou0dz,
+	/*order 0*/ double * __restrict__ drhou0dx,
+	/*order 0*/ double * __restrict__ drhou0dy,
+	/*order 0*/ double * __restrict__ drhou0dz,
 
-						/*order 0*/ double * __restrict__ drhou1dx,
-						/*order 0*/ double * __restrict__ drhou1dy,
-						/*order 0*/ double * __restrict__ drhou1dz,
+	/*order 0*/ double * __restrict__ drhou1dx,
+	/*order 0*/ double * __restrict__ drhou1dy,
+	/*order 0*/ double * __restrict__ drhou1dz,
 
-						/*order 0*/ double * __restrict__ drhou2dx,
-						/*order 0*/ double * __restrict__ drhou2dy,
-						/*order 0*/ double * __restrict__ drhou2dz,
+	/*order 0*/ double * __restrict__ drhou2dx,
+	/*order 0*/ double * __restrict__ drhou2dy,
+	/*order 0*/ double * __restrict__ drhou2dz,
 
-						/*order 0*/ double * __restrict__ dpdx,
-						/*order 0*/ double * __restrict__ dpdy,
-						/*order 0*/ double * __restrict__ dpdz,
+	/*order 0*/ double * __restrict__ dpdx,
+	/*order 0*/ double * __restrict__ dpdy,
+	/*order 0*/ double * __restrict__ dpdz,
 
-						/*order 0*/ double * __restrict__ dpu0dx,
-						/*order 0*/ double * __restrict__ dpu1dy,
-						/*order 0*/ double * __restrict__ dpu2dz,
+	/*order 0*/ double * __restrict__ dpu0dx,
+	/*order 0*/ double * __restrict__ dpu1dy,
+	/*order 0*/ double * __restrict__ dpu2dz,
 
-						/*order 0*/ double * __restrict__ drhou0u0dx,
-						/*order 0*/ double * __restrict__ drhou0u1dy,
-						/*order 0*/ double * __restrict__ drhou0u2dz,
+	/*order 0*/ double * __restrict__ drhou0u0dx,
+	/*order 0*/ double * __restrict__ drhou0u1dy,
+	/*order 0*/ double * __restrict__ drhou0u2dz,
 
-						/*order 0*/ double * __restrict__ drhou1u0dx,
-						/*order 0*/ double * __restrict__ drhou1u1dy,
-						/*order 0*/ double * __restrict__ drhou1u2dz,
+	/*order 0*/ double * __restrict__ drhou1u0dx,
+	/*order 0*/ double * __restrict__ drhou1u1dy,
+	/*order 0*/ double * __restrict__ drhou1u2dz,
 
-						/*order 0*/ double * __restrict__ drhou2u0dx,
-						/*order 0*/ double * __restrict__ drhou2u1dy,
-						/*order 0*/ double * __restrict__ drhou2u2dz,
+	/*order 0*/ double * __restrict__ drhou2u0dx,
+	/*order 0*/ double * __restrict__ drhou2u1dy,
+	/*order 0*/ double * __restrict__ drhou2u2dz,
 
-						/*order 0*/ double * __restrict__ du0d2x,
-						/*order 0*/ double * __restrict__ du0d2y,
-						/*order 0*/ double * __restrict__ du0d2z,
+	/*order 0*/ double * __restrict__ du0d2x,
+	/*order 0*/ double * __restrict__ du0d2y,
+	/*order 0*/ double * __restrict__ du0d2z,
 
-						/*order 0*/ double * __restrict__ du1d2x,
-						/*order 0*/ double * __restrict__ du1d2y,
-						/*order 0*/ double * __restrict__ du1d2z,
+	/*order 0*/ double * __restrict__ du1d2x,
+	/*order 0*/ double * __restrict__ du1d2y,
+	/*order 0*/ double * __restrict__ du1d2z,
 
-						/*order 0*/ double * __restrict__ du2d2x,
-						/*order 0*/ double * __restrict__ du2d2y,
-						/*order 0*/ double * __restrict__ du2d2z,
+	/*order 0*/ double * __restrict__ du2d2x,
+	/*order 0*/ double * __restrict__ du2d2y,
+	/*order 0*/ double * __restrict__ du2d2z,
 
-						/*order 0*/ double * __restrict__ du0dxdy,
-						/*order 0*/ double * __restrict__ du0dxdz,
- 
-						/*order 0*/ double * __restrict__ du1dxdy,
-						/*order 0*/ double * __restrict__ du1dydz,
- 
-						/*order 0*/ double * __restrict__ du2dxdz,
-						/*order 0*/ double * __restrict__ du2dydz,
+	/*order 0*/ double * __restrict__ du0dxdy,
+	/*order 0*/ double * __restrict__ du0dxdz,
 
-						/*order 0*/ double * __restrict__ dTd2x,
-						/*order 0*/ double * __restrict__ dTd2y,
-						/*order 0*/ double * __restrict__ dTd2z,
+	/*order 0*/ double * __restrict__ du1dxdy,
+	/*order 0*/ double * __restrict__ du1dydz,
 
-						/*order 0*/ double * __restrict__ drhoEdx,
-						/*order 0*/ double * __restrict__ drhoEdy,
-						/*order 0*/ double * __restrict__ drhoEdz,
+	/*order 0*/ double * __restrict__ du2dxdz,
+	/*order 0*/ double * __restrict__ du2dydz,
 
-						/*order 0*/ double * __restrict__ drhoEu0dx,
-						/*order 0*/ double * __restrict__ drhoEu1dy,
-						/*order 0*/ double * __restrict__ drhoEu2dz,
-						
-						/*order 0*/ double * __restrict__ Res_rho,
-						/*order 0*/ double * __restrict__ Res_rhou0,
-						/*order 0*/ double * __restrict__ Res_rhou1,
-						/*order 0*/ double * __restrict__ Res_rhou2,
-						/*order 0*/ double * __restrict__ Res_rhoE) {
-	// Calculate position in part
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
+	/*order 0*/ double * __restrict__ dTd2x,
+	/*order 0*/ double * __restrict__ dTd2y,
+	/*order 0*/ double * __restrict__ dTd2z,
+
+	/*order 0*/ double * __restrict__ drhoEdx,
+	/*order 0*/ double * __restrict__ drhoEdy,
+	/*order 0*/ double * __restrict__ drhoEdz,
+
+	/*order 0*/ double * __restrict__ drhoEu0dx,
+	/*order 0*/ double * __restrict__ drhoEu1dy,
+	/*order 0*/ double * __restrict__ drhoEu2dz,
+	
+	/*order 0*/ double * __restrict__ Res_rho,
+	/*order 0*/ double * __restrict__ Res_rhou0,
+	/*order 0*/ double * __restrict__ Res_rhou1,
+	/*order 0*/ double * __restrict__ Res_rhou2,
+	/*order 0*/ double * __restrict__ Res_rhoE) {
+
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
+
+	int32_t col_in_block, row_in_block;
+	int32_t idx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
+
 
 	if (idx<block_ncc) {
 		/*
 		Res_rho[idx] = 0.5 * (- rho[idx] * (du0dx[idx] + du1dy[idx] + du2dz[idx]) 
-						- drhodx[idx] * u0[idx] - drhody[idx] * u1[idx] - drhodz[idx] * u2[idx] 
-						- drhou0dx[idx] - drhou1dy[idx] - drhou2dz[idx]);
+			- drhodx[idx] * u0[idx] - drhody[idx] * u1[idx] - drhodz[idx] * u2[idx] 
+			- drhou0dx[idx] - drhou1dy[idx] - drhou2dz[idx]);
 		*/
 		Res_rho[idx] = -0.5 * (du1dy[idx] + du2dz[idx] + du0dx[idx]) * rho[idx] 
-									- 0.5 * u0[idx] * drhodx[idx] - 0.5 * u1[idx] * drhody[idx] - 0.5 * u2[idx] * drhodz[idx] 
-									- 0.5 * drhou1dy[idx] - 0.5 * drhou2dz[idx] - 0.5 * drhou0dx[idx];
-		
+						- 0.5 * u0[idx] * drhodx[idx] - 0.5 * u1[idx] * drhody[idx] - 0.5 * u2[idx] * drhodz[idx] 
+						- 0.5 * drhou1dy[idx] - 0.5 * drhou2dz[idx] - 0.5 * drhou0dx[idx];
+
 
 		// -0.5 * (du1/dy + du2/dz + du0dx) * rho - 0.5 * u0 * drhodx - 0.5 * u1 * drhody - 0.5 * u2 * drhodz - 0.5 * drhou1dy - 0.5 * drhou2dz - 0.5 * drhou0dx
-		
+
 		Res_rhou0[idx] = -0.5 * (du0dx[idx] + du1dy[idx] + du2dz[idx]) * rhou0[idx]
-										 -0.5 * u0[idx] * drhou0dx[idx] - 0.5 * u1[idx] * drhou0dy[idx] - 0.5 * u2[idx] * drhou0dz[idx] 
-										 -0.5 * drhou0u0dx[idx] - 0.5 * drhou0u1dy[idx] - 0.5 * drhou0u2dz[idx]
-										 - dpdx[idx]
-										+ 1. / RE * (4./3. * du0d2x[idx] + du0d2y[idx] + du0d2z[idx] 
-										+ 1./3. * du1dxdy[idx] 
-										+ 1./3. * du2dxdz[idx]);
+							-0.5 * u0[idx] * drhou0dx[idx] - 0.5 * u1[idx] * drhou0dy[idx] - 0.5 * u2[idx] * drhou0dz[idx] 
+							-0.5 * drhou0u0dx[idx] - 0.5 * drhou0u1dy[idx] - 0.5 * drhou0u2dz[idx]
+							- dpdx[idx]
+							+ 1. / RE * (4./3. * du0d2x[idx] + du0d2y[idx] + du0d2z[idx] 
+							+ 1./3. * du1dxdy[idx] 
+							+ 1./3. * du2dxdz[idx]);
 
 		Res_rhou1[idx] = -0.5 * (du0dx[idx] + du1dy[idx] + du2dz[idx]) * rhou1[idx]
-										 -0.5 * u0[idx] * drhou1dx[idx] - 0.5 * u1[idx] * drhou1dy[idx] - 0.5 * u2[idx] * drhou1dz[idx] 
-										 -0.5 * drhou1u0dx[idx] - 0.5 * drhou1u1dy[idx] - 0.5 * drhou1u2dz[idx]
-										 - dpdy[idx]
-										+ 1. / RE * (4./3. * du1d2y[idx] + du1d2x[idx] + du1d2z[idx] 
-										+ 1./3. * du0dxdy[idx] 
-										+ 1./3. * du2dydz[idx]);
+							-0.5 * u0[idx] * drhou1dx[idx] - 0.5 * u1[idx] * drhou1dy[idx] - 0.5 * u2[idx] * drhou1dz[idx] 
+							-0.5 * drhou1u0dx[idx] - 0.5 * drhou1u1dy[idx] - 0.5 * drhou1u2dz[idx]
+							- dpdy[idx]
+							+ 1. / RE * (4./3. * du1d2y[idx] + du1d2x[idx] + du1d2z[idx] 
+							+ 1./3. * du0dxdy[idx] 
+							+ 1./3. * du2dydz[idx]);
 
 		Res_rhou2[idx] = -0.5 * (du0dx[idx] + du1dy[idx] + du2dz[idx]) * rhou2[idx]
-										 -0.5 * u0[idx] * drhou2dx[idx] - 0.5 * u1[idx] * drhou2dy[idx] - 0.5 * u2[idx] * drhou2dz[idx] 
-										 -0.5 * drhou2u0dx[idx] - 0.5 * drhou2u1dy[idx] - 0.5 * drhou2u2dz[idx]
-										 - dpdz[idx]
-										+ 1. / RE * (4./3. * du2d2z[idx] + du2d2x[idx] + du2d2y[idx] 
-										+ 1./3. * du0dxdz[idx] 
-										+ 1./3. * du1dydz[idx]);
+							-0.5 * u0[idx] * drhou2dx[idx] - 0.5 * u1[idx] * drhou2dy[idx] - 0.5 * u2[idx] * drhou2dz[idx] 
+							-0.5 * drhou2u0dx[idx] - 0.5 * drhou2u1dy[idx] - 0.5 * drhou2u2dz[idx]
+							- dpdz[idx]
+							+ 1. / RE * (4./3. * du2d2z[idx] + du2d2x[idx] + du2d2y[idx] 
+							+ 1./3. * du0dxdz[idx] 
+							+ 1./3. * du1dydz[idx]);
 
 		Res_rhoE[idx] = -0.5 * (du0dx[idx] + du1dy[idx] + du2dz[idx]) * rhoE[idx]
-										-0.5 * drhoEdx[idx] * u0[idx] - 0.5 * drhoEdy[idx] * u1[idx] - 0.5 * drhoEdz[idx] * u2[idx]
-										-dpu0dx[idx] - dpu1dy[idx] - dpu2dz[idx] 
-										-0.5 * drhoEu0dx[idx] - 0.5 * drhoEu1dy[idx] - 0.5 * drhoEu2dz[idx]
-										+ u0[idx] / RE * (4./3. * du0d2x[idx] + du0d2y[idx] + du0d2z[idx]
-											+ 1./3. * du1dxdy[idx] 
-											+ 1./3. * du2dxdz[idx])
-										+ u1[idx] / RE * (1./3. * du0dxdy[idx] 
-											+ du1d2x[idx] + 4./3. * du1d2y[idx] + du1d2z[idx]
-											+ 1./3. * du2dydz[idx])
-										+ u2[idx] / RE * (1./3. * du0dxdz[idx]
-											+ 1./3. * du1dydz[idx]
-											+ du2d2x[idx] + du2d2y[idx] + 4./3. * du2d2z[idx])
-										+ 1./RE *	(du0dy[idx] + du1dx[idx]) * du0dy[idx]
-										+ 1./RE *	(du0dy[idx] + du1dx[idx]) * du1dx[idx]
+							-0.5 * drhoEdx[idx] * u0[idx] - 0.5 * drhoEdy[idx] * u1[idx] - 0.5 * drhoEdz[idx] * u2[idx]
+							-dpu0dx[idx] - dpu1dy[idx] - dpu2dz[idx] 
+							-0.5 * drhoEu0dx[idx] - 0.5 * drhoEu1dy[idx] - 0.5 * drhoEu2dz[idx]
+							+ u0[idx] / RE * (4./3. * du0d2x[idx] + du0d2y[idx] + du0d2z[idx]
+								+ 1./3. * du1dxdy[idx] 
+								+ 1./3. * du2dxdz[idx])
+							+ u1[idx] / RE * (1./3. * du0dxdy[idx] 
+								+ du1d2x[idx] + 4./3. * du1d2y[idx] + du1d2z[idx]
+								+ 1./3. * du2dydz[idx])
+							+ u2[idx] / RE * (1./3. * du0dxdz[idx]
+								+ 1./3. * du1dydz[idx]
+								+ du2d2x[idx] + du2d2y[idx] + 4./3. * du2d2z[idx])
+							+ 1./RE *	(du0dy[idx] + du1dx[idx]) * du0dy[idx]
+							+ 1./RE *	(du0dy[idx] + du1dx[idx]) * du1dx[idx]
 
-										+ 1./RE *	(du0dz[idx] + du2dx[idx]) * du0dz[idx]
-										+ 1./RE *	(du0dz[idx] + du2dx[idx]) * du2dx[idx]
+							+ 1./RE *	(du0dz[idx] + du2dx[idx]) * du0dz[idx]
+							+ 1./RE *	(du0dz[idx] + du2dx[idx]) * du2dx[idx]
 
-										+ 1./RE *	(du1dz[idx] + du2dy[idx]) * du1dz[idx]
-										+ 1./RE *	(du1dz[idx] + du2dy[idx]) * du2dy[idx]
+							+ 1./RE *	(du1dz[idx] + du2dy[idx]) * du1dz[idx]
+							+ 1./RE *	(du1dz[idx] + du2dy[idx]) * du2dy[idx]
 
-										+ 1./RE *	(-2./3. * du0dx[idx] - 2./3. * du1dy[idx] + 4./3. * du2dz[idx]) * du2dz[idx]
-										+ 1./RE *	(-2./3. * du0dx[idx] + 4./3. * du1dy[idx] - 2./3. * du2dz[idx]) * du1dy[idx]
-										+ 1./RE *	( 4./3. * du0dx[idx] - 2./3. * du1dy[idx] - 2./3. * du2dz[idx]) * du0dx[idx]
-									
-										+ (dTd2x[idx] + dTd2y[idx] + dTd2z[idx]) / (MINF * MINF * PR * RE * (GAMA - 1));
+							+ 1./RE *	(-2./3. * du0dx[idx] - 2./3. * du1dy[idx] + 4./3. * du2dz[idx]) * du2dz[idx]
+							+ 1./RE *	(-2./3. * du0dx[idx] + 4./3. * du1dy[idx] - 2./3. * du2dz[idx]) * du1dy[idx]
+							+ 1./RE *	( 4./3. * du0dx[idx] - 2./3. * du1dy[idx] - 2./3. * du2dz[idx]) * du0dx[idx]
+						
+							+ (dTd2x[idx] + dTd2y[idx] + dTd2z[idx]) / (MINF * MINF * PR * RE * (GAMA - 1));
 
 	}
-	
+
 
 
 }
@@ -713,8 +901,8 @@ __global__ void dns_Res(int32_t i_worker, int32_t order_in, int32_t order_out,
 // Utility
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 __global__ void dns_copy(int32_t i_worker, int32_t order_in, int32_t order_out,
-						/*order 0*/ double * __restrict__ f,
-						/*order 0*/ double * __restrict__ g) {
+	/*order 0*/ double * __restrict__ f,
+	/*order 0*/ double * __restrict__ g) {
 	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
 
 	if (idx<block_ncc) {
@@ -727,9 +915,9 @@ __global__ void dns_copy(int32_t i_worker, int32_t order_in, int32_t order_out,
 // Constituent relations
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 __global__ void dns_fdivg(int32_t i_worker, int32_t order_in, int32_t order_out,
-						/*order 0*/ double * __restrict__ f,
-						/*order 0*/ double * __restrict__ g,
-						/*order 0*/ double * __restrict__ res) {
+	/*order 0*/ double * __restrict__ f,
+	/*order 0*/ double * __restrict__ g,
+	/*order 0*/ double * __restrict__ res) {
 	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
 
 	if (idx<block_ncc) {
@@ -738,28 +926,37 @@ __global__ void dns_fdivg(int32_t i_worker, int32_t order_in, int32_t order_out,
 }
 
 __global__ void dns_p(int32_t i_worker, int32_t order_in, int32_t order_out,
-						/*order 0*/ double * __restrict__ rho,
-						/*order 0*/ double * __restrict__ u0,
-						/*order 0*/ double * __restrict__ u1,
-						/*order 0*/ double * __restrict__ u2,
-						/*order 0*/ double * __restrict__ rhoE,
-						/*order 0*/ double * __restrict__ p) {
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
+	/*order 0*/ double * __restrict__ rho,
+	/*order 0*/ double * __restrict__ u0,
+	/*order 0*/ double * __restrict__ u1,
+	/*order 0*/ double * __restrict__ u2,
+	/*order 0*/ double * __restrict__ rhoE,
+	/*order 0*/ double * __restrict__ p) {
+	
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
+
+	int32_t col_in_block, row_in_block;
+	int32_t idx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
+
 
 	if (idx<block_ncc) {
 		p[idx] = (GAMA - 1) * (rhoE[idx] - 
-							0.5 * rho[idx]  * u0[idx] * u0[idx] -
-							0.5 * rho[idx]  * u1[idx] * u1[idx] -
-							0.5 * rho[idx]  * u2[idx] * u2[idx]);
+				0.5 * rho[idx]  * u0[idx] * u0[idx] -
+				0.5 * rho[idx]  * u1[idx] * u1[idx] -
+				0.5 * rho[idx]  * u2[idx] * u2[idx]);
 	}
 
 }
 
 __global__ void dns_T(int32_t i_worker, int32_t order_in, int32_t order_out,
-						/*order 0*/ double * __restrict__ rho,
-						/*order 0*/ double * __restrict__ p,
-						/*order 0*/ double * __restrict__ T) {
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
+	/*order 0*/ double * __restrict__ rho,
+	/*order 0*/ double * __restrict__ p,
+	/*order 0*/ double * __restrict__ T) {
+
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
+
+	int32_t col_in_block, row_in_block;
+	int32_t idx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
 
 	if (idx<block_ncc) {
 		T[idx] = MINF * MINF * GAMA * p[idx] / rho[idx];
@@ -773,25 +970,27 @@ __global__ void dns_T(int32_t i_worker, int32_t order_in, int32_t order_out,
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 __global__ void dns_RKsubStage(int32_t i_worker, int32_t order_in, int32_t order_out,
-						/*order 0*/ double * __restrict__ f0,
-						/*order 0*/ double * __restrict__ f1,
-						/*order 0*/ double * __restrict__ f2,
-						/*order 0*/ double * __restrict__ f3,
-						/*order 0*/ double * __restrict__ f4,
-						/*order 0*/ double * __restrict__ f0_old,
-						/*order 0*/ double * __restrict__ f1_old,
-						/*order 0*/ double * __restrict__ f2_old,
-						/*order 0*/ double * __restrict__ f3_old,
-						/*order 0*/ double * __restrict__ f4_old,
-						/*order 0*/ double * __restrict__ Residual0,
-						/*order 0*/ double * __restrict__ Residual1,
-						/*order 0*/ double * __restrict__ Residual2,
-						/*order 0*/ double * __restrict__ Residual3,
-						/*order 0*/ double * __restrict__ Residual4,
-						/*order 0*/ double rk) {
+	/*order 0*/ double * __restrict__ f0,
+	/*order 0*/ double * __restrict__ f1,
+	/*order 0*/ double * __restrict__ f2,
+	/*order 0*/ double * __restrict__ f3,
+	/*order 0*/ double * __restrict__ f4,
+	/*order 0*/ double * __restrict__ f0_old,
+	/*order 0*/ double * __restrict__ f1_old,
+	/*order 0*/ double * __restrict__ f2_old,
+	/*order 0*/ double * __restrict__ f3_old,
+	/*order 0*/ double * __restrict__ f4_old,
+	/*order 0*/ double * __restrict__ Residual0,
+	/*order 0*/ double * __restrict__ Residual1,
+	/*order 0*/ double * __restrict__ Residual2,
+	/*order 0*/ double * __restrict__ Residual3,
+	/*order 0*/ double * __restrict__ Residual4,
+	/*order 0*/ double rk) {
 
-	// Calculate position in part
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
+
+	int32_t col_in_block, row_in_block;
+	int32_t idx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
 
 	if (idx<block_ncc) {
 		f0[idx] = DT * rk * Residual0[idx] + f0_old[idx];
@@ -803,25 +1002,28 @@ __global__ void dns_RKsubStage(int32_t i_worker, int32_t order_in, int32_t order
 }
 
 __global__ void dns_RKtmpAdvance(int32_t i_worker, int32_t order_in, int32_t order_out,
-						/*order 0*/ double * __restrict__ f0_old_out,
-						/*order 0*/ double * __restrict__ f1_old_out,
-						/*order 0*/ double * __restrict__ f2_old_out,
-						/*order 0*/ double * __restrict__ f3_old_out,
-						/*order 0*/ double * __restrict__ f4_old_out,
-						/*order 0*/ double * __restrict__ f0_old,
-						/*order 0*/ double * __restrict__ f1_old,
-						/*order 0*/ double * __restrict__ f2_old,
-						/*order 0*/ double * __restrict__ f3_old,
-						/*order 0*/ double * __restrict__ f4_old,
-						/*order 0*/ double * __restrict__ Residual0,
-						/*order 0*/ double * __restrict__ Residual1,
-						/*order 0*/ double * __restrict__ Residual2,
-						/*order 0*/ double * __restrict__ Residual3,
-						/*order 0*/ double * __restrict__ Residual4,
-						/*order 0*/ double rk) {
+	/*order 0*/ double * __restrict__ f0_old_out,
+	/*order 0*/ double * __restrict__ f1_old_out,
+	/*order 0*/ double * __restrict__ f2_old_out,
+	/*order 0*/ double * __restrict__ f3_old_out,
+	/*order 0*/ double * __restrict__ f4_old_out,
+	/*order 0*/ double * __restrict__ f0_old,
+	/*order 0*/ double * __restrict__ f1_old,
+	/*order 0*/ double * __restrict__ f2_old,
+	/*order 0*/ double * __restrict__ f3_old,
+	/*order 0*/ double * __restrict__ f4_old,
+	/*order 0*/ double * __restrict__ Residual0,
+	/*order 0*/ double * __restrict__ Residual1,
+	/*order 0*/ double * __restrict__ Residual2,
+	/*order 0*/ double * __restrict__ Residual3,
+	/*order 0*/ double * __restrict__ Residual4,
+	/*order 0*/ double rk) {
 
-	// Calculate position in part
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
+
+	int32_t col_in_block, row_in_block;
+	int32_t idx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
+
 
 	if (idx<block_ncc) {
 		f0_old_out[idx] = DT * rk * Residual0[idx] + f0_old[idx];
@@ -837,7 +1039,7 @@ __global__ void dns_init(const double * __restrict__ p_in, double * __restrict__
 	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
 
 	if (idx<block_header_size) {
- 		p_out[idx]=p_in[idx];
+		p_out[idx]=p_in[idx];
 	}
 
 
@@ -845,8 +1047,8 @@ __global__ void dns_init(const double * __restrict__ p_in, double * __restrict__
 
 
 __global__ void dns_DebugAdvance(int32_t i_worker, int32_t order_in, int32_t order_out,
-						/*order 0*/ double * __restrict__ f0_out,
-						/*order 0*/ double * __restrict__ f0_in) {
+	/*order 0*/ double * __restrict__ f0_out,
+	/*order 0*/ double * __restrict__ f0_in) {
 
 	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
 
@@ -857,7 +1059,7 @@ __global__ void dns_DebugAdvance(int32_t i_worker, int32_t order_in, int32_t ord
 }
 
 __global__ void dns_Debug(int32_t i_worker, int32_t order_in, int32_t order_out,
-						/*order 0*/ double * __restrict__ f0_in, /*order 0*/ double * __restrict__ f0_out) {
+	/*order 0*/ double * __restrict__ f0_in, /*order 0*/ double * __restrict__ f0_out) {
 
 	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
 
@@ -874,7 +1076,6 @@ __global__ void dns_Debug(int32_t i_worker, int32_t order_in, int32_t order_out,
 
 	}
 }
-
 
 
 
@@ -896,21 +1097,14 @@ void DS::caller_worker (double ** p_in, double ** p_out, int32_t i_part, int32_t
 	int32_t n_global_worker = n_procs * n_worker;
 	int32_t stage = (global_worker_id + n_global_worker * i_super_cycle) % 3;
 
-	if (myID == 0 && i_super_cycle < 1) {
-
-		//cout << "Worker: " << global_worker_id << " processing slice: " << i_part << endl;
-	
-	}
-
 	//cout << "Working on stage " << stage << endl;
 
 	double rkold = RKOLD[stage];
 	double rknew = RKNEW[stage];
 
-	//cout << "global_worker_id: " << global_worker_id << ", nworker: " << nworker << ", myID: " << myID << ", iworker: " << iworker << ", n_global_worker: " << n_global_worker << ", n_procs" << n_procs << ", n_worker: " << n_worker << ", stage: " << stage << ", i_super_cycle: " << i_super_cycle << endl;
-
 	//cout << "rkold " << rkold << " rknew " << rknew << endl;
 
+	
 	
 	// Sort out parts
 	double* p_c = p_in[0];
@@ -927,6 +1121,7 @@ void DS::caller_worker (double ** p_in, double ** p_out, int32_t i_part, int32_t
 	int sy_bc_l  = 1;
 	int sy_bc_r  = 1;
 	int sy_bc_rr = 1;
+
 	if (i_part == 0) {
 		p_ll = p_rr;
 		p_l = p_r;
@@ -966,12 +1161,10 @@ void DS::caller_worker (double ** p_in, double ** p_out, int32_t i_part, int32_t
 
 	//cout << "Blocksize: " << blockSize << ", threads_per_block: " << threads_per_block << endl;
 
-	threads_per_block = 128;
+	threads_per_block = BLOCKSIZE_Z * BLOCKSIZE_Y;
 	int32_t gridSize = (blockSize + threads_per_block - 1) / threads_per_block;
 
 	//cout << "Slice Size: " << blockSize << ", gridSize: " << gridSize << ", started Threads: " << gridSize * threads_per_block << endl;
-
-
 
 
 	if (stage == 0) {
@@ -1016,43 +1209,35 @@ void DS::caller_worker (double ** p_in, double ** p_out, int32_t i_part, int32_t
 
 	// du0dx, du0dy, du0dz
 	dns_dfdx <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u0_l, (double*) d_u0_r, (double*) d_u0_ll, (double*) d_u0_rr, (double*) d_du0dx, sy_bc_ll, sy_bc_l, sy_bc_r, sy_bc_rr);
-	dns_dfdy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u0_c, (double*) d_du0dy);
-	dns_dfdz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u0_c, (double*) d_du0dz);
+	dns_dfdyz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u0_c, (double*) d_du0dy, (double*) d_du0dz);
 
 	// du1dx, du1dy, du1dz
 	dns_dfdx <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u1_l, (double*) d_u1_r, (double*) d_u1_ll, (double*) d_u1_rr, (double*) d_du1dx);
-	dns_dfdy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u1_c, (double*) d_du1dy);
-	dns_dfdz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u1_c, (double*) d_du1dz);
+	dns_dfdyz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u1_c, (double*) d_du1dy, (double*) d_du1dz);
 
 	// du2dx, du2dy, du2dz
 	dns_dfdx <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u2_l, (double*) d_u2_r, (double*) d_u2_ll, (double*) d_u2_rr, (double*) d_du2dx);
-	dns_dfdy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u2_c, (double*) d_du2dy);
-	dns_dfdz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u2_c, (double*) d_du2dz);
+	dns_dfdyz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u2_c, (double*) d_du2dy, (double*) d_du2dz);
 
 	// drhodx, drhody, drhodz
 	dns_dfdx <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_l[offset_rho], &p_r[offset_rho], &p_ll[offset_rho], &p_rr[offset_rho], (double*) d_drhodx);
-	dns_dfdy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rho], (double*) d_drhody);
-	dns_dfdz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rho], (double*) d_drhodz);
+	dns_dfdyz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rho], (double*) d_drhody, (double*) d_drhodz);
 
 	// drhou0dx, drhou0dy, drhou0dz
 	dns_dfdx <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_l[offset_rhou0], &p_r[offset_rhou0], &p_ll[offset_rhou0], &p_rr[offset_rhou0], (double*) d_drhou0dx, sy_bc_ll, sy_bc_l, sy_bc_r, sy_bc_rr);
-	dns_dfdy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou0], (double*) d_drhou0dy);
-	dns_dfdz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou0], (double*) d_drhou0dz);
-
+	dns_dfdyz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou0], (double*) d_drhou0dy, (double*) d_drhou0dz);
+	
 	// drhou1dx, drhou1dy, drhou1dz
 	dns_dfdx <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_l[offset_rhou1], &p_r[offset_rhou1], &p_ll[offset_rhou1], &p_rr[offset_rhou1], (double*) d_drhou1dx);
-	dns_dfdy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou1], (double*) d_drhou1dy);
-	dns_dfdz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou1], (double*) d_drhou1dz);
+	dns_dfdyz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou1], (double*) d_drhou1dy, (double*) d_drhou1dz);
 
 	// drhou2dx, drhou2dy, drhou2dz
 	dns_dfdx <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_l[offset_rhou2], &p_r[offset_rhou2], &p_ll[offset_rhou2], &p_rr[offset_rhou2], (double*) d_drhou2dx);
-	dns_dfdy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou2], (double*) d_drhou2dy);
-	dns_dfdz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou2], (double*) d_drhou2dz);
+	dns_dfdyz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhou2], (double*) d_drhou2dy, (double*) d_drhou2dz);
 
 	// dpdx, dpdy, dpdz
 	dns_dfdx <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_p_l, (double*) d_p_r, (double*) d_p_ll, (double*) d_p_rr, (double*) d_dpdx);
-	dns_dfdy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_p_c, (double*) d_dpdy);
-	dns_dfdz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_p_c, (double*) d_dpdz);
+	dns_dfdyz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_p_c, (double*) d_dpdy, (double*) d_dpdz);
 
 	// drhou0u0dx, drhou0u1dy, drhou0u2dz
 	dns_dfgdx <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_l[offset_rhou0], &p_r[offset_rhou0], &p_ll[offset_rhou0], &p_rr[offset_rhou0],
@@ -1074,23 +1259,19 @@ void DS::caller_worker (double ** p_in, double ** p_out, int32_t i_part, int32_t
 
 	// du0d2x, du0d2y, du0d2z
 	dns_dfd2x <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u0_c, (double*) d_u0_l, (double*) d_u0_r, (double*) d_u0_ll, (double*) d_u0_rr, (double*) d_du0d2x, sy_bc_ll, sy_bc_l, sy_bc_r, sy_bc_rr);
-	dns_dfd2y <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u0_c, (double*) d_du0d2y);
-	dns_dfd2z <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u0_c, (double*) d_du0d2z);
+	dns_dfd2yz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u0_c, (double*) d_du0d2y, (double*) d_du0d2z);
 
 	// du1d2x, du1d2y, du1d2z
 	dns_dfd2x <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u1_c, (double*) d_u1_l, (double*) d_u1_r, (double*) d_u1_ll, (double*) d_u1_rr, (double*) d_du1d2x);
-	dns_dfd2y <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u1_c, (double*) d_du1d2y);
-	dns_dfd2z <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u1_c, (double*) d_du1d2z);
+	dns_dfd2yz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u1_c, (double*) d_du1d2y, (double*) d_du1d2z);
 
 	// du2d2x, du2d2y, du2d2z
 	dns_dfd2x <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u2_c, (double*) d_u2_l, (double*) d_u2_r, (double*) d_u2_ll, (double*) d_u2_rr, (double*) d_du2d2x);
-	dns_dfd2y <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u2_c, (double*) d_du2d2y);
-	dns_dfd2z <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u2_c, (double*) d_du2d2z);
+	dns_dfd2yz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u2_c, (double*) d_du2d2y, (double*) d_du2d2z);
 
 	//14 *3		
 	// du0dxdy, du0dxdz
-	dns_dfdy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_du0dx, (double*) d_du0dxdy);
-	dns_dfdz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_du0dx, (double*) d_du0dxdz);
+	dns_dfdyz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_du0dx, (double*) d_du0dxdy, (double*) d_du0dxdz);
 
 	// ddns_dfgdz
 	dns_dfdy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_du1dx, (double*) d_du1dxdy);
@@ -1099,6 +1280,7 @@ void DS::caller_worker (double ** p_in, double ** p_out, int32_t i_part, int32_t
 	// du2dxdz, du2dydz
 	dns_dfdz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_du2dx, (double*) d_du2dxdz);
 	dns_dfdz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_du2dy, (double*) d_du2dydz);
+
 	// 3 * 2
 	// dpu0dx, dpu1dy, dpu2dz
 	dns_dfgdx <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_p_l, (double*) d_p_r, (double*) d_p_ll, (double*) d_p_rr,
@@ -1108,13 +1290,11 @@ void DS::caller_worker (double ** p_in, double ** p_out, int32_t i_part, int32_t
 
 	// dTd2x, dTd2y, dTd2z
 	dns_dfd2x <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_T_c, (double*) d_T_l, (double*) d_T_r, (double*) d_T_ll, (double*) d_T_rr, (double*) d_dTd2x);
-	dns_dfd2y <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_T_c, (double*) d_dTd2y);
-	dns_dfd2z <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_T_c, (double*) d_dTd2z);
+	dns_dfd2yz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_T_c, (double*) d_dTd2y, (double*) d_dTd2z);
 
 	// drhoEdx, drhoEdy, drhoEdz
 	dns_dfdx <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_l[offset_rhoE], &p_r[offset_rhoE], &p_ll[offset_rhoE], &p_rr[offset_rhoE], (double*) d_drhoEdx);
-	dns_dfdy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhoE], (double*) d_drhoEdy);
-	dns_dfdz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhoE], (double*) d_drhoEdz);
+	dns_dfdyz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_c[offset_rhoE], (double*) d_drhoEdy, (double*) d_drhoEdz);
 
 	// drhoEu0dx, drhoEu1dy, drhoEu2dz
 	dns_dfgdx <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, &p_l[offset_rhoE], &p_r[offset_rhoE], &p_ll[offset_rhoE], &p_rr[offset_rhoE],
@@ -1124,10 +1304,7 @@ void DS::caller_worker (double ** p_in, double ** p_out, int32_t i_part, int32_t
 
 	// 4 * 3
 
-	int32_t threads_per_block_dns_Res = 128;
-	int32_t gridSize_dns_Res = (blockSize + threads_per_block_dns_Res - 1) / threads_per_block_dns_Res;
-
-	dns_Res <<<gridSize_dns_Res,threads_per_block_dns_Res,0,*stream>>>(0, 0, 0,
+	dns_Res <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0,
 						(double*) &p_c[offset_rho],
 						(double*) d_u0_c, (double*) d_u1_c, (double*) d_u2_c,
 						&p_c[offset_rhou0], &p_c[offset_rhou1], &p_c[offset_rhou2], &p_c[offset_rhoE],
@@ -1159,17 +1336,17 @@ void DS::caller_worker (double ** p_in, double ** p_out, int32_t i_part, int32_t
 						(double*) d_Res_rhou2,
 						(double*) d_Res_rhoE);
 
-	dns_RKsubStage <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0,
-				&p_c_out[offset_rho], 
-				&p_c_out[offset_rhou0], &p_c_out[offset_rhou1], &p_c_out[offset_rhou2],
-				&p_c_out[offset_rhoE],
-				&p_c[offset_rho_old],
-				&p_c[offset_rhou0_old], &p_c[offset_rhou1_old], &p_c[offset_rhou2_old],
-				&p_c[offset_rhoE_old],
-				(double*) d_Res_rho,
-				(double*) d_Res_rhou0, (double*) d_Res_rhou1, (double*) d_Res_rhou2, 
-				(double*) d_Res_rhoE,
-				rknew);
+		dns_RKsubStage <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0,
+					&p_c_out[offset_rho], 
+					&p_c_out[offset_rhou0], &p_c_out[offset_rhou1], &p_c_out[offset_rhou2],
+					&p_c_out[offset_rhoE],
+					&p_c[offset_rho_old],
+					&p_c[offset_rhou0_old], &p_c[offset_rhou1_old], &p_c[offset_rhou2_old],
+					&p_c[offset_rhoE_old],
+					(double*) d_Res_rho,
+					(double*) d_Res_rhou0, (double*) d_Res_rhou1, (double*) d_Res_rhou2, 
+					(double*) d_Res_rhoE,
+					rknew);
 	
 	dns_RKtmpAdvance <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0,
 					&p_c_out[offset_rho_old],
@@ -1182,7 +1359,6 @@ void DS::caller_worker (double ** p_in, double ** p_out, int32_t i_part, int32_t
 					(double*) d_Res_rhou0, (double*) d_Res_rhou1, (double*) d_Res_rhou2, 
 					(double*) d_Res_rhoE,
 					rkold);
-
 
 	//dns_copy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_Res_rho, &p_c[offset_tmp0]);
 	//dns_copy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_Res_rhou0, &p_c[offset_tmp1]);

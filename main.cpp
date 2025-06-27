@@ -2,20 +2,30 @@
 
 #include <iostream>
 #include <mpi.h>
-#include "dsea.h"
+#include <dsea.h>
+
+#include "dsea_order_case.h"
 using namespace std;
 
 // #define my_n_worker			1
 
+
+
+
 int32_t main(int argc, char ** argv) {
 
-	if (argc!=4) {
+	if (argc!=3) {
 		cout << "usage: dsea n_worker n_cycles n_rails" << endl;
-		return -1;
+//		return -1;
 	}
 	int32_t my_n_worker=atoi(argv[1]);
 	int32_t n_super_cycle=atoi(argv[2]);
 	int32_t my_n_rails=atoi(argv[3]);
+
+	if ((my_n_worker * n_super_cycle) % 3 != 0) {
+		cout << "Number of workers times number of super cycle must be a multiple of 3!" << endl;
+		return -1;
+	}
 
 	// cout << "order: " << order_in << " " << order_out << endl;
 	// cout << "n_worker: " << my_n_worker << endl;
@@ -40,8 +50,8 @@ int32_t main(int argc, char ** argv) {
  	// }
 
 	int32_t igpu=0;
-	int32_t my_order_in=2;
-	int32_t my_order_out=0;
+	int32_t my_order_in=ORDER_IN;
+	int32_t my_order_out=ORDER_OUT;
 
 	DS ds(igpu,my_n_worker,my_n_part,my_order_in,my_order_out,myID,nProcs,my_n_rails);
 

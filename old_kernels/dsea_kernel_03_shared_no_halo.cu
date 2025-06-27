@@ -102,11 +102,13 @@ __global__ void dns_dfdx(int32_t i_worker, int32_t order_in, int32_t order_out,
 						/*order 2*/ double * __restrict__ f_ll, double * __restrict__ f_rr,
 						/*order 0*/ double * __restrict__ dfdx, int sy_bc_ll = 1, int sy_bc_l = 1, int sy_bc_r = 1, int sy_bc_rr = 1) {
 
-	// Calculate position in part
-	//int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
+	
+	
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
 
 	int32_t col_in_block, row_in_block;
+	int32_t idx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
+
 
 
 	if (idx<block_ncc) {
@@ -125,8 +127,11 @@ __global__ void dns_dfgdx(int32_t i_worker, int32_t order_in, int32_t order_out,
 						int sy_bc_f_ll = 1, int sy_bc_f_l = 1, int sy_bc_f_r = 1, int sy_bc_f_rr = 1,
 						int sy_bc_g_ll = 1, int sy_bc_g_l = 1, int sy_bc_g_r = 1, int sy_bc_g_rr = 1) {
 
-	// Calculate position in part
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
+
+	int32_t col_in_block, row_in_block;
+	int32_t idx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
+
 
 	if (idx<block_ncc) {
 		dfgdx[idx] = 1/DX * (1./12. * (sy_bc_f_ll * f_ll[idx] * sy_bc_g_ll * g_ll[idx]) - 2./3. * (sy_bc_f_l * f_l[idx] * sy_bc_g_l * g_l[idx]) 
@@ -139,78 +144,156 @@ __global__ void dns_dfdy(int32_t i_worker, int32_t order_in, int32_t order_out,
 						/*order 0*/ double * __restrict__ f,
 						/*order 0*/ double * __restrict__ dfdy) {
 
-	// Calculate position in part
-	//int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
-
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
-
+	__shared__ double s_d[BLOCKSIZE_Y][BLOCKSIZE_Z]; // 4-wide halo
+	// Thread Idx
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
+	// Global Idx
+	int32_t gidx;
+	// Idx in Block
 	int32_t col_in_block, row_in_block;
+	// Global Idx
+	//gidx = thread_to_global_idx(problemsize, tidx, block_size_z, block_size_y, warp_size_z, warp_size_y, &col_in_block, &row_in_block);
+	gidx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
 
-	if (idx<block_ncc) {
+
+	if (gidx<block_ncc) {
+		s_d[row_in_block][col_in_block] = f[gidx];
+
+		if (i_worker == 1 && tidx < 256) {
+			printf("f[gidx]=%lf, row_in_block, col_in_block %d %d\n", f[gidx], row_in_block, col_in_block);
+		}
+
 		int32_t Y, Z;
-		int32_t idx_ll, idx_l, idx_r, idx_rr;
-		COORDS(idx, Y, Z, NZ);
-		
-		// Calculate idx with periodic boundary condition
-		IDX((NY+Y-2)%NY, Z, idx_ll, NZ);
-		IDX((NY+Y-1)%NY, Z, idx_l, NZ);
-		IDX((NY+Y+1)%NY, Z, idx_r, NZ);
-		IDX((NY+Y+2)%NY, Z, idx_rr, NZ);
+		int32_t dy_ll, dy_l, dy_r, dy_rr;
+		COORDS(gidx, Y, Z, NZ);
 
-		dfdy[idx] = 1/DY * (1./12. * f[idx_ll] - 2./3. * f[idx_l] + 2./3. * f[idx_r] - 1./12. * f[idx_rr]); 
+		__syncthreads();
+
+		double f_ll, f_l, f_r, f_rr;
+
+		IDX((NY+Y-2)%NY, Z, dy_ll, NZ);
+		IDX((NY+Y-1)%NY, Z, dy_l, NZ);
+		IDX((NY+Y+1)%NY, Z, dy_r, NZ);
+		IDX((NY+Y+2)%NY, Z, dy_rr, NZ);
+
+//		if (i_worker == 1 && tidx == 0) {
+//			for (int i = 0; i < BLOCKSIZE_Z; ++i) {
+//				for (int j = 0; j < BLOCKSIZE_Y; ++j) {
+//					printf("s_d[%d][%d]=%lf\n", j, i, s_d[j][i]);
+//				}
+//			}
+//		}
+//
+		// get possible halos
+		f_ll = (row_in_block < 2) ? f[dy_ll] : s_d[row_in_block-2][col_in_block];
+		f_l = (row_in_block < 1) ? f[dy_l] : s_d[row_in_block-1][col_in_block];
+		f_r = (row_in_block >= BLOCKSIZE_Y-1) ? f[dy_r] : s_d[row_in_block+1][col_in_block];
+		f_rr = (row_in_block >= BLOCKSIZE_Y-2) ? f[dy_rr] : s_d[row_in_block+2][col_in_block];
+
+
+//		if (i_worker == 1 && tidx < 256) {
+//			printf("f_ll=%lf, f_rr=%lf, f_l=%lf, f_r=%lf, row_in_block, col_in_block %d %d\n", f_ll, f_rr, f_l, f_r, row_in_block, col_in_block);
+//		}
+//
+//		__syncthreads();
+//
+//		if (i_worker == 1 && tidx < 256) {
+//			printf("gidx %d, dy_ll %d, dy_l %d, dy_r %d, dy_rr %d, (%d/%d)\n", gidx, dy_ll, dy_l, dy_r, dy_rr, row_in_block, col_in_block);
+//		}
+//
+		dfdy[gidx] = 1/DY * (1./12. * f_ll - 2./3. * f_l + 2./3. * f_r - 1./12. * f_rr); 
 
 		//printf("dfdy My Id: %d, my slice coordinates %d,%d, neighbors: %d/%d/%d/%d, values: %lf/%lf/%lf/%lf/%lf, result %lf\n", idx, Y,Z, idx_ll, idx_l, idx_r, idx_rr, f[idx_ll], f[idx_l], f[idx], f[idx_r], f[idx_rr], dfdy[idx]);
 	}
 }
+
 
 __global__ void dns_dfgdy(int32_t i_worker, int32_t order_in, int32_t order_out,
 						/*order 1*/ double * __restrict__ f,
 						/*order 1*/ double * __restrict__ g,
 						/*order 0*/ double * __restrict__ dfgdy) {
 
-	// Calculate position in part
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
+		__shared__ double s_d[BLOCKSIZE_Y][BLOCKSIZE_Z]; // 4-wide halo
+		// Thread Idx
+		int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
+		// Global Idx
+		int32_t gidx;
+		// Idx in Block
+		int32_t col_in_block, row_in_block;
+		// Global Idx
+		//gidx = thread_to_global_idx(problemsize, tidx, block_size_z, block_size_y, warp_size_z, warp_size_y, &col_in_block, &row_in_block);
+		gidx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
+	
+	
+	if (gidx<block_ncc) {
+		s_d[row_in_block][col_in_block] = f[gidx] * g[gidx];
 
-	if (idx<block_ncc) {
 		int32_t Y, Z;
-		int32_t idx_ll, idx_l, idx_r, idx_rr;
-		COORDS(idx, Y, Z, NZ);
-		
-		// Calculate idx with periodic boundary condition
-		IDX((NY+Y-2)%NY, Z, idx_ll, NZ);
-		IDX((NY+Y-1)%NY, Z, idx_l, NZ);
-		IDX((NY+Y+1)%NY, Z, idx_r, NZ);
-		IDX((NY+Y+2)%NY, Z, idx_rr, NZ);
+		int32_t dy_ll, dy_l, dy_r, dy_rr;
+		COORDS(gidx, Y, Z, NZ);
 
-		dfgdy[idx] = 1/DY * (1./12. * (f[idx_ll] * g[idx_ll]) - 2./3. * (f[idx_l] * g[idx_l]) 
-											+ 2./3. * (f[idx_r] * g[idx_r]) - 1./12. * (f[idx_rr] * g[idx_rr])); 
+		__syncthreads();
+
+		double f_ll, f_l, f_r, f_rr;
+
+		IDX((NY+Y-2)%NY, Z, dy_ll, NZ);
+		IDX((NY+Y-1)%NY, Z, dy_l, NZ);
+		IDX((NY+Y+1)%NY, Z, dy_r, NZ);
+		IDX((NY+Y+2)%NY, Z, dy_rr, NZ);
+
+		// get possible halos
+		f_ll = (row_in_block < 2) ? f[dy_ll] * g[dy_ll] : s_d[row_in_block-2][col_in_block];
+		f_l = (row_in_block < 1) ? f[dy_l] * g[dy_l] : s_d[row_in_block-1][col_in_block];
+		f_r = (row_in_block >= BLOCKSIZE_Y-1) ? f[dy_r] * g[dy_r] : s_d[row_in_block+1][col_in_block];
+		f_rr = (row_in_block >= BLOCKSIZE_Y-2) ? f[dy_rr] * g[dy_rr] : s_d[row_in_block+2][col_in_block];
+
+		dfgdy[gidx] = 1/DY * (1./12. * f_ll - 2./3. * f_l + 2./3. * f_r - 1./12. * f_rr); 
 	}
 }
+
+
 
 __global__ void dns_dfdz(int32_t i_worker, int32_t order_in, int32_t order_out,
 						/*order 1*/ double * __restrict__ f,
 						/*order 0*/ double * __restrict__ dfdz) {
 
-	// Calculate position in part
-	//int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
-
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
-
+	__shared__ double s_d[BLOCKSIZE_Y][BLOCKSIZE_Z]; // 4-wide halo
+	// Thread Idx
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
+	// Global Idx
+	int32_t gidx;
+	// Idx in Block
 	int32_t col_in_block, row_in_block;
+	// Global Idx
+	//gidx = thread_to_global_idx(problemsize, tidx, block_size_z, block_size_y, warp_size_z, warp_size_y, &col_in_block, &row_in_block);
+	gidx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
 
-	if (idx<block_ncc) {
+
+
+	if (gidx<block_ncc) {
+		s_d[row_in_block][col_in_block] = f[gidx];
+
 		int32_t Y, Z;
-		int32_t idx_ll, idx_l, idx_r, idx_rr;
-		COORDS(idx, Y, Z, NZ);
-		
-		// Calculate idx with periodic boundary condition
-		IDX(Y, (NZ+Z-2)%NZ, idx_ll, NZ);
-		IDX(Y, (NZ+Z-1)%NZ, idx_l, NZ);
-		IDX(Y, (NZ+Z+1)%NZ, idx_r, NZ);
-		IDX(Y, (NZ+Z+2)%NZ, idx_rr, NZ);
+		int32_t dz_ll, dz_l, dz_r, dz_rr;
+		COORDS(gidx, Y, Z, NZ);
 
-		dfdz[idx] = 1/DZ * (1./12. * f[idx_ll] - 2./3. * f[idx_l] + 2./3. * f[idx_r] - 1./12. * f[idx_rr]); 
+		__syncthreads();
 
+		double f_ll, f_l, f_r, f_rr;
+
+		IDX(Y, (NZ+Z-2)%NZ, dz_ll, NZ);
+		IDX(Y, (NZ+Z-1)%NZ, dz_l, NZ);
+		IDX(Y, (NZ+Z+1)%NZ, dz_r, NZ);
+		IDX(Y, (NZ+Z+2)%NZ, dz_rr, NZ);
+
+		// get possible halos
+		f_ll = (col_in_block < 2) ? f[dz_ll] : s_d[row_in_block][col_in_block-2];
+		f_l = (col_in_block < 1) ? f[dz_l] : s_d[row_in_block][col_in_block-1];
+		f_r = (col_in_block >= BLOCKSIZE_Z-1) ? f[dz_r] : s_d[row_in_block][col_in_block+1];
+		f_rr = (col_in_block >= BLOCKSIZE_Z-2) ? f[dz_rr] : s_d[row_in_block][col_in_block+2];
+
+		dfdz[gidx] = 1/DZ * (1./12. * f_ll - 2./3. * f_l + 2./3. * f_r - 1./12. * f_rr); 
+	
 		//printf("dfdz My Id: %d, my slice coordinates %d,%d, neighbors: %d/%d/%d/%d\n", idx, Y,Z, idx_ll, idx_l, idx_r, idx_rr);
 	}
 
@@ -221,22 +304,44 @@ __global__ void dns_dfgdz(int32_t i_worker, int32_t order_in, int32_t order_out,
 						/*order 1*/ double * __restrict__ g,
 						/*order 0*/ double * __restrict__ dfgdz) {
 
-	// Calculate position in part
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
+	__shared__ double s_d[BLOCKSIZE_Y][BLOCKSIZE_Z]; // 4-wide halo
+	// Thread Idx
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
+	// Global Idx
+	int32_t gidx;
+	// Idx in Block
+	int32_t col_in_block, row_in_block;
+	// Global Idx
+	//gidx = thread_to_global_idx(problemsize, tidx, block_size_z, block_size_y, warp_size_z, warp_size_y, &col_in_block, &row_in_block);
+	gidx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
 
-	if (idx<block_ncc) {
+
+						
+	if (gidx<block_ncc) {
+		s_d[row_in_block][col_in_block] = f[gidx] * g[gidx];
+
 		int32_t Y, Z;
-		int32_t idx_ll, idx_l, idx_r, idx_rr;
-		COORDS(idx, Y, Z, NZ);
-		
-		// Calculate idx with periodic boundary condition
-		IDX(Y, (NZ+Z-2)%NZ, idx_ll, NZ);
-		IDX(Y, (NZ+Z-1)%NZ, idx_l, NZ);
-		IDX(Y, (NZ+Z+1)%NZ, idx_r, NZ);
-		IDX(Y, (NZ+Z+2)%NZ, idx_rr, NZ);
+		int32_t dz_ll, dz_l, dz_r, dz_rr;
+		COORDS(gidx, Y, Z, NZ);
 
-		dfgdz[idx] = 1/DZ * (1./12. * (f[idx_ll] * g[idx_ll]) - 2./3. * (f[idx_l] * g[idx_l]) 
-											+ 2./3. * (f[idx_r] * g[idx_r]) - 1./12. * (f[idx_rr] * g[idx_rr])); 
+		__syncthreads();
+
+		double f_ll, f_l, f_r, f_rr;
+
+		IDX(Y, (NZ+Z-2)%NZ, dz_ll, NZ);
+		IDX(Y, (NZ+Z-1)%NZ, dz_l, NZ);
+		IDX(Y, (NZ+Z+1)%NZ, dz_r, NZ);
+		IDX(Y, (NZ+Z+2)%NZ, dz_rr, NZ);
+
+		// get possible halos
+		f_ll = (col_in_block < 2) ? f[dz_ll] * g[dz_ll] : s_d[row_in_block][col_in_block-2];
+		f_l = (col_in_block < 1) ? f[dz_l] * g[dz_l] : s_d[row_in_block][col_in_block-1];
+		f_r = (col_in_block >= BLOCKSIZE_Z-1) ? f[dz_r] * g[dz_r] : s_d[row_in_block][col_in_block+1];
+		f_rr = (col_in_block >= BLOCKSIZE_Z-2) ? f[dz_rr] * g[dz_rr] : s_d[row_in_block][col_in_block+2];
+
+
+		dfgdz[gidx] = 1/DZ * (1./12. * f_ll - 2./3. * f_l + 2./3. * f_r - 1./12. * f_rr); 
+
 	}
 
 }
@@ -251,8 +356,11 @@ __global__ void dns_dfd2x(int32_t i_worker, int32_t order_in, int32_t order_out,
 						/*order 2*/ double * __restrict__ f_ll, double * __restrict__ f_rr,
 						/*order 0*/ double * __restrict__ dfd2x, int sy_bc_ll = 1, int sy_bc_l = 1, int sy_bc_r = 1, int sy_bc_rr = 1) {
 
-	// Calculate position in part
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
+
+	int32_t col_in_block, row_in_block;
+	int32_t idx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
+
 
 	if (idx<block_ncc) {
 		dfd2x[idx] = 1/(DX*DX) * (-1./12. * sy_bc_ll * f_ll[idx] + 4./3. * sy_bc_l * f_l[idx] - 5./2. * f_c[idx] + 4./3. * sy_bc_r * f_r[idx] - 1./12. * sy_bc_rr * f_rr[idx]); 
@@ -260,27 +368,49 @@ __global__ void dns_dfd2x(int32_t i_worker, int32_t order_in, int32_t order_out,
 
 }
 
+
 __global__ void dns_dfd2y(int32_t i_worker, int32_t order_in, int32_t order_out,
 						/*order 1*/ double * __restrict__ f,
 						/*order 0*/ double * __restrict__ dfd2y) {
 
-	// Calculate position in part
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
+	__shared__ double s_d[BLOCKSIZE_Y][BLOCKSIZE_Z]; // 4-wide halo
+	// Thread Idx
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
+	// Global Idx
+	int32_t gidx;
+	// Idx in Block
+	int32_t col_in_block, row_in_block;
+	// Global Idx
+	//gidx = thread_to_global_idx(problemsize, tidx, block_size_z, block_size_y, warp_size_z, warp_size_y, &col_in_block, &row_in_block);
+	gidx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
 
-	if (idx<block_ncc) {
+
+	if (gidx<block_ncc) {
+		s_d[row_in_block][col_in_block] = f[gidx];
+
 		int32_t Y, Z;
-		int32_t idx_ll, idx_l, idx_r, idx_rr;
-		COORDS(idx, Y, Z, NZ);
-		
-		// Calculate idx with periodic boundary condition
-		IDX((NY+Y-2)%NY, Z, idx_ll, NZ);
-		IDX((NY+Y-1)%NY, Z, idx_l, NZ);
-		IDX((NY+Y+1)%NY, Z, idx_r, NZ);
-		IDX((NY+Y+2)%NY, Z, idx_rr, NZ);
+		int32_t dy_ll, dy_l, dy_r, dy_rr;
+		COORDS(gidx, Y, Z, NZ);
+
+		__syncthreads();
+
+		double f_ll, f_l, f_r, f_rr;
+
+		IDX((NY+Y-2)%NY, Z, dy_ll, NZ);
+		IDX((NY+Y-1)%NY, Z, dy_l, NZ);
+		IDX((NY+Y+1)%NY, Z, dy_r, NZ);
+		IDX((NY+Y+2)%NY, Z, dy_rr, NZ);
+
+		// get possible halos
+		f_ll = (row_in_block < 2) ? f[dy_ll] : s_d[row_in_block-2][col_in_block];
+		f_l = (row_in_block < 1) ? f[dy_l] : s_d[row_in_block-1][col_in_block];
+		f_r = (row_in_block >= BLOCKSIZE_Y-1) ? f[dy_r] : s_d[row_in_block+1][col_in_block];
+		f_rr = (row_in_block >= BLOCKSIZE_Y-2) ? f[dy_rr] : s_d[row_in_block+2][col_in_block];
+
 
 		//printf("dfd2y My Id: %d, my slice coordinates %d,%d, neighbors: %d/%d/%d/%d\n", idx, Y,Z, idx_ll, idx_l, idx_r, idx_rr);
 
-		dfd2y[idx] = 1/(DY*DY) * (-1./12. * f[idx_ll] + 4./3. * f[idx_l] - 5./2. * f[idx] + 4./3. * f[idx_r] - 1./12. * f[idx_rr]); 
+		dfd2y[gidx] = 1/(DY*DY) * (-1./12. * f_ll + 4./3. * f_l - 5./2. * s_d[row_in_block][col_in_block] + 4./3. * f_r - 1./12. * f_rr); 
 	}
 }
 
@@ -288,23 +418,42 @@ __global__ void dns_dfd2z(int32_t i_worker, int32_t order_in, int32_t order_out,
 						/*order 0*/ double * __restrict__ f,
 						/*order 0*/ double * __restrict__ dfd2z) {
 
-	// Calculate position in part
-	int32_t idx = blockIdx.x*blockDim.x+threadIdx.x;
+	__shared__ double s_d[BLOCKSIZE_Y][BLOCKSIZE_Z]; // 4-wide halo
+	// Thread Idx
+	int32_t tidx = blockIdx.x*blockDim.x+threadIdx.x;
+	// Global Idx
+	int32_t gidx;
+	// Idx in Block
+	int32_t col_in_block, row_in_block;
+	// Global Idx
+	//gidx = thread_to_global_idx(problemsize, tidx, block_size_z, block_size_y, warp_size_z, warp_size_y, &col_in_block, &row_in_block);
+	gidx = thread_to_global_idx(my_n_part, tidx, BLOCKSIZE_Z, BLOCKSIZE_Y, WARPSIZE_Z, WARPSIZE_Y, &col_in_block, &row_in_block);
 
-	if (idx<block_ncc) {
+
+						
+	if (gidx<block_ncc) {
+		s_d[row_in_block][col_in_block] = f[gidx];
+
 		int32_t Y, Z;
-		int32_t idx_ll, idx_l, idx_r, idx_rr;
-		COORDS(idx, Y, Z, NZ);
-		
-		// Calculate idx with periodic boundary condition
-		IDX(Y, (NZ+Z-2)%NZ, idx_ll, NZ);
-		IDX(Y, (NZ+Z-1)%NZ, idx_l, NZ);
-		IDX(Y, (NZ+Z+1)%NZ, idx_r, NZ);
-		IDX(Y, (NZ+Z+2)%NZ, idx_rr, NZ);
+		int32_t dz_ll, dz_l, dz_r, dz_rr;
+		COORDS(gidx, Y, Z, NZ);
 
-		//printf("dfd2z My Id: %d, my slice coordinates %d,%d, neighbors: %d/%d/%d/%d\n", idx, Y,Z, idx_ll, idx_l, idx_r, idx_rr);
+		__syncthreads();
 
-		dfd2z[idx] = 1/(DZ*DZ) * (-1./12. * f[idx_ll] + 4./3. * f[idx_l] - 5./2. * f[idx] + 4./3. * f[idx_r] - 1./12. * f[idx_rr]); 
+		double f_ll, f_l, f_r, f_rr;
+
+		IDX(Y, (NZ+Z-2)%NZ, dz_ll, NZ);
+		IDX(Y, (NZ+Z-1)%NZ, dz_l, NZ);
+		IDX(Y, (NZ+Z+1)%NZ, dz_r, NZ);
+		IDX(Y, (NZ+Z+2)%NZ, dz_rr, NZ);
+
+		// get possible halos
+		f_ll = (col_in_block < 2) ? f[dz_ll] : s_d[row_in_block][col_in_block-2];
+		f_l = (col_in_block < 1) ? f[dz_l] : s_d[row_in_block][col_in_block-1];
+		f_r = (col_in_block >= BLOCKSIZE_Z-1) ? f[dz_r] : s_d[row_in_block][col_in_block+1];
+		f_rr = (col_in_block >= BLOCKSIZE_Z-2) ? f[dz_rr] : s_d[row_in_block][col_in_block+2];
+
+		dfd2z[gidx] = 1/(DZ*DZ) * (-1./12. * f_ll + 4./3. * f_l - 5./2. * s_d[row_in_block][col_in_block] + 4./3. * f_r - 1./12. * f_rr); 
 	}
 }
 
@@ -966,7 +1115,7 @@ void DS::caller_worker (double ** p_in, double ** p_out, int32_t i_part, int32_t
 
 	//cout << "Blocksize: " << blockSize << ", threads_per_block: " << threads_per_block << endl;
 
-	threads_per_block = 128;
+	threads_per_block = BLOCKSIZE_Z * BLOCKSIZE_Y;
 	int32_t gridSize = (blockSize + threads_per_block - 1) / threads_per_block;
 
 	//cout << "Slice Size: " << blockSize << ", gridSize: " << gridSize << ", started Threads: " << gridSize * threads_per_block << endl;
@@ -1016,6 +1165,7 @@ void DS::caller_worker (double ** p_in, double ** p_out, int32_t i_part, int32_t
 
 	// du0dx, du0dy, du0dz
 	dns_dfdx <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u0_l, (double*) d_u0_r, (double*) d_u0_ll, (double*) d_u0_rr, (double*) d_du0dx, sy_bc_ll, sy_bc_l, sy_bc_r, sy_bc_rr);
+	//cout << "i_part " << i_part << "iworker " << iworker << "i_super_cycle " << i_super_cycle << endl;
 	dns_dfdy <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u0_c, (double*) d_du0dy);
 	dns_dfdz <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0, (double*) d_u0_c, (double*) d_du0dz);
 
@@ -1124,10 +1274,7 @@ void DS::caller_worker (double ** p_in, double ** p_out, int32_t i_part, int32_t
 
 	// 4 * 3
 
-	int32_t threads_per_block_dns_Res = 128;
-	int32_t gridSize_dns_Res = (blockSize + threads_per_block_dns_Res - 1) / threads_per_block_dns_Res;
-
-	dns_Res <<<gridSize_dns_Res,threads_per_block_dns_Res,0,*stream>>>(0, 0, 0,
+	dns_Res <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0,
 						(double*) &p_c[offset_rho],
 						(double*) d_u0_c, (double*) d_u1_c, (double*) d_u2_c,
 						&p_c[offset_rhou0], &p_c[offset_rhou1], &p_c[offset_rhou2], &p_c[offset_rhoE],
@@ -1159,17 +1306,17 @@ void DS::caller_worker (double ** p_in, double ** p_out, int32_t i_part, int32_t
 						(double*) d_Res_rhou2,
 						(double*) d_Res_rhoE);
 
-	dns_RKsubStage <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0,
-				&p_c_out[offset_rho], 
-				&p_c_out[offset_rhou0], &p_c_out[offset_rhou1], &p_c_out[offset_rhou2],
-				&p_c_out[offset_rhoE],
-				&p_c[offset_rho_old],
-				&p_c[offset_rhou0_old], &p_c[offset_rhou1_old], &p_c[offset_rhou2_old],
-				&p_c[offset_rhoE_old],
-				(double*) d_Res_rho,
-				(double*) d_Res_rhou0, (double*) d_Res_rhou1, (double*) d_Res_rhou2, 
-				(double*) d_Res_rhoE,
-				rknew);
+		dns_RKsubStage <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0,
+					&p_c_out[offset_rho], 
+					&p_c_out[offset_rhou0], &p_c_out[offset_rhou1], &p_c_out[offset_rhou2],
+					&p_c_out[offset_rhoE],
+					&p_c[offset_rho_old],
+					&p_c[offset_rhou0_old], &p_c[offset_rhou1_old], &p_c[offset_rhou2_old],
+					&p_c[offset_rhoE_old],
+					(double*) d_Res_rho,
+					(double*) d_Res_rhou0, (double*) d_Res_rhou1, (double*) d_Res_rhou2, 
+					(double*) d_Res_rhoE,
+					rknew);
 	
 	dns_RKtmpAdvance <<<gridSize,threads_per_block,0,*stream>>>(0, 0, 0,
 					&p_c_out[offset_rho_old],

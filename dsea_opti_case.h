@@ -1,0 +1,34 @@
+#define BLOCKSIZE_Z 96
+#define BLOCKSIZE_Y 1
+#define WARPSIZE_Z 32
+#define WARPSIZE_Y 1
+
+#define BLOCKSIZE_Z_U0 64
+#define BLOCKSIZE_Y_U0 8
+#define WARPSIZE_Z_U0 32
+#define WARPSIZE_Y_U0 1
+
+#define BLOCKSIZE_Z_U1 64
+#define BLOCKSIZE_Y_U1 4
+#define WARPSIZE_Z_U1 32
+#define WARPSIZE_Y_U1 1
+
+#define BLOCKSIZE_Z_U2 64
+#define BLOCKSIZE_Y_U2 8
+#define WARPSIZE_Z_U2 32
+#define WARPSIZE_Y_U2 1
+
+#define BLOCKSIZE_Z_ETPyz 64
+#define BLOCKSIZE_Y_ETPyz 2
+#define WARPSIZE_Z_ETPyz 32
+#define WARPSIZE_Y_ETPyz 1
+
+#define BLOCKSIZE_Z_ETPx 96
+#define BLOCKSIZE_Y_ETPx 1
+#define WARPSIZE_Z_ETPx 32
+#define WARPSIZE_Y_ETPx 1
+
+#define BLOCKSIZE_Z_RES 96
+#define BLOCKSIZE_Y_RES 1
+#define WARPSIZE_Z_RES 32
+#define WARPSIZE_Y_RES 1
