@@ -63,4 +63,4 @@ If you use this work in academic or scientific contexts, please cite:
 
 > M. Rose, S. Homes, L. Ramsperger, J. Gracia, C. Niethammer, and J. Vrabec.
 > *Cyclic Data Streaming on GPUs for Short Range Stencils Applied to Molecular Dynamics*.
-> Submitted to Euro-Par 2025.
+> HeteroPar 2025, accepted.
